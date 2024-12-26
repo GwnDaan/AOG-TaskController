@@ -213,7 +213,7 @@ public:
                 // Add an extra byte if there are any remaining sections that don't fit in a multiple of 8
                 numberOfBytes++;
             }
-            std::vector<uint8_t> AOG = {0x80, 0x81, 0x7B, 0xE7, numberOfBytes};
+            std::vector<uint8_t> AOG = {0x80, 0x81, 0x70, 0x80, numberOfBytes};
 
             std::uint8_t sectionIndex = 0;
             while (sectionIndex < clients[partner].get_number_of_sections())
@@ -246,6 +246,7 @@ public:
             std::cout << std::endl;
 
             udp::endpoint broadcast_endpoint(boost::asio::ip::address_v4::broadcast(), 8888);
+            //AWSEND
             udpConnection.send_to(boost::asio::buffer(AOG, sizeof(AOG)), broadcast_endpoint);
         }
         break;
@@ -441,7 +442,8 @@ int main()
         // Peek to see if we have any data
         boost::system::error_code ec;
         udp::endpoint sender_endpoint;
-        size_t bytesReceived = udpConnection.receive_from(boost::asio::buffer(rxBuffer + rxIndex, sizeof(rxBuffer) - rxIndex), sender_endpoint, 0, ec);
+        //AWRECEIVE
+        size_t bytesReceived = udpConnection.receive_from(boost::asio::buffer(rxBuffer + rxIndex, sizeof(rxBuffer) - rxIndex), local_endpoint, 0, ec);
 
         if (ec == boost::asio::error::would_block)
         {
@@ -468,7 +470,6 @@ int main()
                         {
                             sectionStates.push_back(rxBuffer[index + 6] & (1 << i));
                         }
-
                         server.update_section_states(sectionStates);
                         index += len + 1;
                     }
