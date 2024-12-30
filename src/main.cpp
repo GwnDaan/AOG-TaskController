@@ -471,10 +471,10 @@ int main()
                         std::vector<bool> sectionStates;
                         for (std::uint8_t i = 0; i < len; i++)
                         {
-                            sectionStates.push_back(rxBuffer[index] & 1); // no offset now, new PGN
+                            sectionStates.push_back(rxBuffer[index++] == 1); // no offset now, new PGN
                         }
                         server.update_section_states(sectionStates);
-                        index += len + 1; // what happens here if >8 sections?
+                        //index += len + 1; // what happens here if >8 sections?
                     }
                     else if (src == 0x70) {
                         //std::cout << "Saw my own ISOBUS traffic" << std::endl;
