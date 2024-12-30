@@ -248,9 +248,9 @@ public:
             }
             std::cout << std::endl;
 
-            udp::endpoint broadcast_endpoint(boost::asio::ip::address_v4::broadcast(), 8888);
-            // boost::asio::ip::address_v4 listen_address = boost::asio::ip::address_v4::from_string("192.168.1.255");
-            // udp::endpoint broadcast_endpoint(listen_address, 8888);
+            //udp::endpoint broadcast_endpoint(boost::asio::ip::address_v4::broadcast(), 9999);
+            boost::asio::ip::address_v4 listen_address = boost::asio::ip::address_v4::from_string("192.168.1.255");
+            udp::endpoint broadcast_endpoint(listen_address, 9999);
             udpConnection.send_to(boost::asio::buffer(AOG, sizeof(AOG)), broadcast_endpoint);
 
         }
@@ -488,7 +488,7 @@ int main()
                 else
                 {
                     // Unknown start of message, reset buffer
-                    std::cout << "Unknown start of message: " << std::hex << static_cast<int>(rxBuffer[index - 2]) << " " << static_cast<int>(rxBuffer[index - 1]) << std::endl;
+                    //std::cout << "Unknown start of message: " << std::hex << static_cast<int>(rxBuffer[index - 2]) << " " << static_cast<int>(rxBuffer[index - 1]) << std::endl;
                     rxIndex = 0;
                 }
 
