@@ -235,19 +235,19 @@ function ISOBUS_proto.dissector(buffer, pinfo, tree)
     pinfo.cols.protocol = "AgIsoStack ISOBUS"
     local SRC = buffer(2, 1):uint()
     local PGN = buffer(3, 1):uint()
-    if (SRC == 0x70 and PGN == 0x80) then
+    if (SRC == 0x70 and PGN == 0x00) then
         local length = buffer(4, 1):uint()
         local data_start = 5
-        for sectionIndex = 0, length - 1 do -- let's make the section IDs relatable, based at 1
+        for sectionIndex = 0, (length - 1) * 2, 2 do -- let's make the section IDs relatable, based at 1
             local sectionByte = buffer(data_start + sectionIndex, 1):uint()
-            for i = 0, 7 do
-                local is_bit_set = bit.band(sectionByte, bit.lshift(1, i)) ~= 0
-                local stateIndex = is_bit_set and 1 or 0
-                -- print(string.format("Bit %d is %s", i, is_bit_set and "set" or "not set"))
-                local sectionLabel = string.format("Byte %d: Section %d:  %s", sectionIndex, i,
-                    SectionState[stateIndex])
-                subtree:add((" (" .. sectionLabel .. ")"))
-            end
+            print(string.format("Buffer %d ", sectionByte))
+
+            -- local is_bit_set = bit.band(sectionByte, bit.lshift(1, i)) ~= 0
+            -- local stateIndex = is_bit_set and 1 or 0
+            -- -- print(string.format("Bit %d is %s", i, is_bit_set and "set" or "not set"))
+            -- local sectionLabel = string.format("Byte %d: Section %d:  %s", sectionIndex, i,
+            --     SectionState[stateIndex])
+            subtree:add((" (" .. sectionLabel .. ")"))
         end
     end
 end
@@ -383,9 +383,29 @@ function AOGProtocol_proto.dissector(buffer, pinfo, tree)
         pinfo.cols.info = "AOG GGA Location response"
 
     elseif byte1 == 0x80 and byte2 == 0x81 then -- we're into PGNs from AOG now
+
         if MajorPGN == 0x70 then -- from ISOBUS
             pinfo.cols.info = "ISOBUS data"
             if MinorPGN == 0x00 then -- 0
+                local SRC = buffer(2, 1):uint()
+                local PGN = buffer(3, 1):uint()
+                local length = buffer(4, 1):uint()
+                local data_start = 5
+                print(string.format("length is %d", length))
+                for sectionIndex = 0, (length - 1), 2 do -- let's make the section IDs relatable, based at 1
+                    local sectionByte = buffer(data_start + sectionIndex, 1):uint()
+                    if sectionByte == 0 then
+                        subtree:add("Section " .. sectionIndex + 1, "Disabled")
+                    else
+                        subtree:add("Section " .. sectionIndex + 1, "Enabled")
+                    end
+                    -- local is_bit_set = bit.band(sectionByte, bit.lshift(1, i)) ~= 0
+                    -- local stateIndex = is_bit_set and 1 or 0
+                    -- -- print(string.format("Bit %d is %s", i, is_bit_set and "set" or "not set"))
+                    -- local sectionLabel = string.format("Byte %d: Section %d:  %s", sectionIndex, i,
+                    --     SectionState[stateIndex])
+                    --subtree:add((" (" .. sectionLabel .. ")"))
+                end
                 pinfo.cols.info = "AOG -> ISOBUS data"
             end
             if MinorPGN == 0x80 then -- 128
@@ -393,7 +413,7 @@ function AOGProtocol_proto.dissector(buffer, pinfo, tree)
             end
         end
         if MajorPGN == 0x7f then -- steer module
-            
+
             if MinorPGN == 0x64 then
                 pinfo.cols.info = "GPSOut"
             elseif MinorPGN == 0xaa then -- 170
@@ -617,5 +637,5 @@ end
 local udp_port = DissectorTable.get("udp.port")
 udp_port:add(9999, AOGProtocol_proto)
 udp_port:add(2233, RTCMProtocol_proto)
---udp_port:add(8888, ISOBUS_proto)
+-- udp_port:add(8888, ISOBUS_proto)
 
