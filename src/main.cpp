@@ -436,7 +436,7 @@ int main()
     udpConnection.open(udp::v4());
     udpConnection.set_option(boost::asio::socket_base::broadcast(true));
     udpConnection.non_blocking(true);
-    udp::endpoint local_endpoint(boost::asio::ip::address_v4::any(), 8888);
+    udp::endpoint local_endpoint(boost::asio::ip::address_v4::from_string("192.168.1.10"), 8888);
     udpConnection.bind(local_endpoint);
 
     std::cout << "Local endpoint address: " << local_endpoint.address().to_string() << std::endl;
@@ -444,14 +444,13 @@ int main()
 
     uint8_t rxBuffer[512];
     size_t rxIndex = 0;
-
     while (running)
     {
         // Peek to see if we have any data
         boost::system::error_code ec;
         udp::endpoint sender_endpoint;
         // AWRECEIVE
-        size_t bytesReceived = udpConnection.receive_from(boost::asio::buffer(rxBuffer + rxIndex, sizeof(rxBuffer) - rxIndex), local_endpoint, 0, ec);
+        size_t bytesReceived = udpConnection.receive_from(boost::asio::buffer(rxBuffer + rxIndex, sizeof(rxBuffer) - rxIndex),  sender_endpoint, 0, ec);
 
         if (ec == boost::asio::error::would_block)
         {
@@ -469,9 +468,9 @@ int main()
                     std::uint8_t src = rxBuffer[index++];
                     std::uint8_t pgn = rxBuffer[index++];
                     std::uint8_t len = rxBuffer[index++];
-                    std::cout << "Saw AOG stuff" << std::endl;
                     if (src == 0x70 && pgn == 0x00) // 239 - EF Machine Data
                     {
+                    std::cout << "Saw AOG stuff" << std::endl;
                         std::cout << "AOG -> ISOBUS received!" << std::endl;
                         // We only care about the sections (index + 6)
                         std::vector<bool> sectionStates;
@@ -482,8 +481,10 @@ int main()
                         server.update_section_states(sectionStates);
                         index += len + 1;
                     }
-                    else
-                    {
+                    else if (src == 0x70) {
+                        std::cout << "Saw my own ISOBUS traffic" << std::endl;
+                    }
+                    else {
                         // Unknown PGN, reset buffer
                         // std::cout << "Unknown PGN: " << std::hex << static_cast<int>(pgn) << std::endl;
                         rxIndex = 0;
