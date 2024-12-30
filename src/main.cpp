@@ -467,16 +467,14 @@ int main()
                     std::uint8_t len = rxBuffer[index++];
                     if (src == 0x70 && pgn == 0x00) // 239 - EF Machine Data
                     {
-                    std::cout << "Saw AOG stuff" << std::endl;
-                        std::cout << "AOG -> ISOBUS received!" << std::endl;
                         // We only care about the sections (index + 6)
                         std::vector<bool> sectionStates;
-                        for (std::uint8_t i = 0; i < len - 2; i++)
+                        for (std::uint8_t i = 0; i < len; i++)
                         {
-                            sectionStates.push_back(rxBuffer[index + 6] & (1 << i));
+                            sectionStates.push_back(rxBuffer[index] & 1); // no offset now, new PGN
                         }
                         server.update_section_states(sectionStates);
-                        index += len + 1;
+                        index += len + 1; // what happens here if >8 sections?
                     }
                     else if (src == 0x70) {
                         //std::cout << "Saw my own ISOBUS traffic" << std::endl;
