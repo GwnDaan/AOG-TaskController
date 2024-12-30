@@ -199,6 +199,8 @@ public:
         case static_cast<std::uint16_t>(isobus::DataDescriptionIndex::ActualCondensedWorkState225_240):
         case static_cast<std::uint16_t>(isobus::DataDescriptionIndex::ActualCondensedWorkState241_256):
         {
+            std::cout << "Sending AOG stuff" << std::endl;
+
             std::uint8_t sectionIndexOffset = NUMBER_SECTIONS_PER_CONDENSED_MESSAGE * static_cast<std::uint8_t>(dataDescriptionIndex - static_cast<std::uint16_t>(isobus::DataDescriptionIndex::ActualCondensedWorkState1_16));
 
             for (std::uint_fast8_t i = 0; i < NUMBER_SECTIONS_PER_CONDENSED_MESSAGE; i++)
@@ -207,29 +209,32 @@ public:
             }
 
             // AOG uses 1 bit per section, i.e. 0 = off, 1 = on
-            std::uint8_t numberOfBytes = clients[partner].get_number_of_sections() / 8;
-            if (clients[partner].get_number_of_sections() % 8 > 0)
-            {
-                // Add an extra byte if there are any remaining sections that don't fit in a multiple of 8
-                numberOfBytes++;
-            }
-            std::vector<uint8_t> AOG = {0x80, 0x81, 0x70, 0x80, numberOfBytes};
+            // std::uint8_t numberOfBytes = clients[partner].get_number_of_sections() / 8;
+            // if (clients[partner].get_number_of_sections() % 8 > 0)
+            // {
+            //     // Add an extra byte if there are any remaining sections that don't fit in a multiple of 8
+            //     numberOfBytes++;
+            // }
+            std::vector<uint8_t> AOG = {0x80, 0x81, 0x70, 0x80, clients[partner].get_number_of_sections()}; // 0x700x80 = TC -> AOG, 0x700x00 = AOG -> TC
 
             std::uint8_t sectionIndex = 0;
+            std::cout << " <<sending to AOG>> ";
+
             while (sectionIndex < clients[partner].get_number_of_sections())
             {
-                std::uint8_t byte = 0;
-                for (std::uint8_t i = 0; i < 8; i++)
+                if (clients[partner].get_section_actual_state(sectionIndex) == SectionState::ON)
                 {
-                    if (sectionIndex < clients[partner].get_number_of_sections())
-                    {
-                        byte |= (clients[partner].get_section_actual_state(sectionIndex) == SectionState::ON) << i;
-                        sectionIndex++;
-                    }
+                    std::cout << 1;
+                    AOG.push_back(1);
                 }
-                AOG.push_back(byte);
+                else
+                {
+                    std::cout << 0;
+                    AOG.push_back(0);
+                }
+                AOG.push_back(0); // filler-byte, for the moment, not used. 2 bytes per section currently
+                sectionIndex++;
             }
-
             // add the checksum
             int16_t CK_A = 0;
             for (uint8_t i = 2; i < AOG.size() - 1; i++)
@@ -238,16 +243,19 @@ public:
             }
             AOG.push_back(CK_A & 0xFF);
 
-            std::cout << "Sending AOG message: " << std::endl;
+            std::cout << std::endl;
             for (const auto &byte : AOG)
             {
                 std::cout << std::hex << static_cast<int>(byte) << " ";
             }
             std::cout << std::endl;
 
-            udp::endpoint broadcast_endpoint(boost::asio::ip::address_v4::broadcast(), 8888);
-            //AWSEND
+            // udp::endpoint broadcast_endpoint(boost::asio::ip::address_v4::broadcast(), 8888);
+            boost::asio::ip::address_v4 listen_address = boost::asio::ip::address_v4::from_string("192.168.1.255");
+            udp::endpoint broadcast_endpoint(listen_address, 8888);
             udpConnection.send_to(boost::asio::buffer(AOG, sizeof(AOG)), broadcast_endpoint);
+            std::cout << "SENT!" << std::endl;
+
         }
         break;
         }
@@ -442,7 +450,7 @@ int main()
         // Peek to see if we have any data
         boost::system::error_code ec;
         udp::endpoint sender_endpoint;
-        //AWRECEIVE
+        // AWRECEIVE
         size_t bytesReceived = udpConnection.receive_from(boost::asio::buffer(rxBuffer + rxIndex, sizeof(rxBuffer) - rxIndex), local_endpoint, 0, ec);
 
         if (ec == boost::asio::error::would_block)
@@ -461,9 +469,10 @@ int main()
                     std::uint8_t src = rxBuffer[index++];
                     std::uint8_t pgn = rxBuffer[index++];
                     std::uint8_t len = rxBuffer[index++];
-
-                    if (pgn == 0xEF) // 239 - EF Machine Data
+                    std::cout << "Saw AOG stuff" << std::endl;
+                    if (src == 0x70 && pgn == 0x00) // 239 - EF Machine Data
                     {
+                        std::cout << "AOG -> ISOBUS received!" << std::endl;
                         // We only care about the sections (index + 6)
                         std::vector<bool> sectionStates;
                         for (std::uint8_t i = 0; i < len - 2; i++)
