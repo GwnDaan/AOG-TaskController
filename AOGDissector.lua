@@ -35,7 +35,7 @@ local cooked
 
 local AOGFields = {
     AOGID = ProtoField.uint16("AOGProtocol.AOGID", "AOGID", base.HEX),
-    --AOGID2 = ProtoField.uint8("AOGProtocol.AOGID2", "AOGID2", base.HEX),
+    -- AOGID2 = ProtoField.uint8("AOGProtocol.AOGID2", "AOGID2", base.HEX),
     MajorPGN = ProtoField.uint8("AOGProtocol.MajorPGN", "MajorPGN", base.HEX, MajorPGNs),
     MinorPGN = ProtoField.uint8("AOGProtocol.MinorPGN", "MinorPGN", base.HEX, MinorPGNs),
 
@@ -207,19 +207,18 @@ local eInt16, encodedAngle
 -- and register those fields
 AOGProtocol_proto.fields = allFields
 
-
 -- _              _
---(_) ___   ___  | |__   _   _  ___
---| |/ __| / _ \ | '_ \ | | | |/ __|
---| |\__ \| (_) || |_) || |_| |\__ \
---|_||___/ \___/ |_.__/  \__,_||___/
+-- (_) ___   ___  | |__   _   _  ___
+-- | |/ __| / _ \ | '_ \ | | | |/ __|
+-- | |\__ \| (_) || |_) || |_| |\__ \
+-- |_||___/ \___/ |_.__/  \__,_||___/
 
 local SectionState = {
     [0] = "Disabled",
     [1] = "Enabled"
 }
 local ISOBUSFields = {
-    ISOBUS_Section = ProtoField.uint8("ISOBUS_Section", "_", base.DEC, SectionState),
+    ISOBUS_Section = ProtoField.uint8("ISOBUS_Section", "_", base.DEC, SectionState)
 }
 ISOBUS_proto.fields = ISOBUSFields
 
@@ -239,33 +238,35 @@ function ISOBUS_proto.dissector(buffer, pinfo, tree)
     if (SRC == 0x70 and PGN == 0x80) then
         local length = buffer(4, 1):uint()
         local data_start = 5
-        for sectionIndex = 1, length do -- let's make the section IDs relatable, based at 1
-            local sectionByte = buffer(data_start + sectionIndex - 1, 1):uint()
-            local sectionLabel = string.format("Section %d: %s", sectionIndex, SectionState[sectionByte] or "Unknown state")
-            subtree:add((" (" .. sectionLabel .. ")")
-        )
+        for sectionIndex = 0, length - 1 do -- let's make the section IDs relatable, based at 1
+            local sectionByte = buffer(data_start + sectionIndex, 1):uint()
+            for i = 0, 7 do
+                local is_bit_set = bit.band(sectionByte, bit.lshift(1, i)) ~= 0
+                local stateIndex = is_bit_set and 1 or 0
+                -- print(string.format("Bit %d is %s", i, is_bit_set and "set" or "not set"))
+                local sectionLabel = string.format("Byte %d: Section %d:  %s", sectionIndex, i,
+                    SectionState[stateIndex])
+                subtree:add((" (" .. sectionLabel .. ")"))
+            end
         end
     end
 end
 
-
 --       _
 -- _ __ | |_   ___  _ __ ___
---| '__|| __| / __|| '_ ` _ \
---| |   | |_ | (__ | | | | | |
---|_|    \__| \___||_| |_| |_|
+-- | '__|| __| / __|| '_ ` _ \
+-- | |   | |_ | (__ | | | | | |
+-- |_|    \__| \___||_| |_| |_|
 function RTCMProtocol_proto.dissector(buffer, pinfo, tree)
     local subtree = tree:add(RTCMProtocol_proto, buffer(), "RTCM (NTRIP) data (not decoded)")
     pinfo.cols.info = "RTCM (NTRIP to F9P)"
     pinfo.cols.protocol = "RTCM"
 end
 
-
-
---__ _   ___    __ _
---/ _` | / _ \  / _` |
---| (_| || (_) || (_| |
---\__,_| \___/  \__, |
+-- __ _   ___    __ _
+-- / _` | / _ \  / _` |
+-- | (_| || (_) || (_| |
+-- \__,_| \___/  \__, |
 --              |___/
 
 function AOGProtocol_proto.dissector(buffer, pinfo, tree)
@@ -273,9 +274,9 @@ function AOGProtocol_proto.dissector(buffer, pinfo, tree)
     if buffer:len() < 4 then
         return
     end
-    
+
     local subtree = tree:add(AOGProtocol_proto, buffer(), "AOG Data")
-    
+
     local byte1 = buffer(0, 1):uint()
     local byte2 = buffer(1, 1):uint()
     local MajorPGN = buffer(2, 1):uint()
@@ -388,11 +389,14 @@ function AOGProtocol_proto.dissector(buffer, pinfo, tree)
                 pinfo.cols.info = "AOG -> ISOBUS data"
             end
             if MinorPGN == 0x80 then -- 128
-                pinfo.cols.info = "ISOBUS -> AOG data"
+                pinfo.cols.info = "*************** ISOBUS -> AOG data"
             end
         end
         if MajorPGN == 0x7f then -- steer module
-            if MinorPGN == 0xaa then -- 170
+            
+            if MinorPGN == 0x64 then
+                pinfo.cols.info = "GPSOut"
+            elseif MinorPGN == 0xaa then -- 170
                 pinfo.cols.info = "CANBUS manufacturer change to brand id:" .. buffer(5, 1)
             end
             if MinorPGN == 0xab then -- 171
@@ -472,8 +476,12 @@ function AOGProtocol_proto.dissector(buffer, pinfo, tree)
                 subtree:add(AOGFields.PGN239_Tram, buffer(8, 1))
                 subtree:add(AOGFields.PGN239_geoStop, buffer(9, 1))
                 -- 10 is commented out in AOG for some reason
-                subtree:add(AOGFields.PGN239_SC1to8, buffer(11,1)):append_text("  (Sections: " .. to_binary(buffer(11, 1):uint(),8) .. ")")
-                subtree:add(AOGFields.PGN239_SC9to16, buffer(12,1)):append_text("  (Sections: " .. to_binary(buffer(12, 1):uint(),8) .. ")")
+                subtree:add(AOGFields.PGN239_SC1to8, buffer(11, 1)):append_text("  (Sections: " ..
+                                                                                    to_binary(buffer(11, 1):uint(), 8) ..
+                                                                                    ")")
+                subtree:add(AOGFields.PGN239_SC9to16, buffer(12, 1)):append_text("  (Sections: " ..
+                                                                                     to_binary(buffer(12, 1):uint(), 8) ..
+                                                                                     ")")
                 pinfo.cols.info = "Machine Data"
             end
             if MinorPGN == 0xfa then -- 250
@@ -525,8 +533,12 @@ function AOGProtocol_proto.dissector(buffer, pinfo, tree)
                 end
                 subtree:add(AOGFields.PGN254_SteerAngle, buffer(8, 2):le_uint())
                 subtree:add(AOGFields.PGN254_LineDistance, buffer(10, 1))
-                subtree:add(AOGFields.PGN254_SC1to8, buffer(11,1)):append_text("  (Sections: " .. to_binary(buffer(11, 1):uint(),8) .. ")")
-                subtree:add(AOGFields.PGN254_SC9to16, buffer(12,1)):append_text("  (Sections: " .. to_binary(buffer(12, 1):uint(),8) .. ")")
+                subtree:add(AOGFields.PGN254_SC1to8, buffer(11, 1)):append_text("  (Sections: " ..
+                                                                                    to_binary(buffer(11, 1):uint(), 8) ..
+                                                                                    ")")
+                subtree:add(AOGFields.PGN254_SC9to16, buffer(12, 1)):append_text("  (Sections: " ..
+                                                                                     to_binary(buffer(12, 1):uint(), 8) ..
+                                                                                     ")")
                 pinfo.cols.info = "Steer data (from AgIO)"
             end
         end
@@ -605,5 +617,5 @@ end
 local udp_port = DissectorTable.get("udp.port")
 udp_port:add(9999, AOGProtocol_proto)
 udp_port:add(2233, RTCMProtocol_proto)
---udp_port:add(8889, ISOBUS_proto)
+--udp_port:add(8888, ISOBUS_proto)
 
