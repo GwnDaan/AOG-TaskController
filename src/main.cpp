@@ -52,7 +52,7 @@ static std::shared_ptr<isobus::ControlFunction> clientTC = nullptr;
 //TODO load these from settings file...
 uint8_t MDL_IP1 = 192;
 uint8_t MDL_IP2 = 168;
-uint8_t MDL_IP3 = 1; 
+uint8_t MDL_IP3 = 5; 
 
 
 static std::atomic_bool running = {true};
@@ -254,7 +254,11 @@ public:
             // std::cout << std::endl;
 
             //udp::endpoint broadcast_endpoint(boost::asio::ip::address_v4::broadcast(), 9999);
-            boost::asio::ip::address_v4 listen_address = boost::asio::ip::address_v4::from_string("192.168.5.255"); // wpon't work on 255.255.255.255, need to pick correct subnet
+            boost::asio::ip::address_v4 listen_address = boost::asio::ip::address_v4::from_string(
+                (std::ostringstream() << static_cast<int>(MDL_IP1) << "."
+                    << static_cast<int>(MDL_IP2) << "."
+                    << static_cast<int>(MDL_IP3) << "."
+                    << "255").str()); // wpon't work on 255.255.255.255, need to pick correct subnet
             // better to follow the AOG example of scanning/setting subnets perhaps?
             udp::endpoint broadcast_endpoint(listen_address, 9999); // AOG listens on 9999, not 8888
             udpConnection.send_to(boost::asio::buffer(AOG, sizeof(AOG)), broadcast_endpoint);
