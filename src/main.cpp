@@ -216,41 +216,39 @@ public:
             std::vector<uint8_t> AOG = {0x80, 0x81, 0x70, 0x80, clients[partner].get_number_of_sections()}; // 0x700x80 = TC -> AOG, 0x700x00 = AOG -> TC
 
             std::uint8_t sectionIndex = 0;
-            std::cout << " <<sending to AOG>> ";
 
             while (sectionIndex < clients[partner].get_number_of_sections())
             {
                 if (clients[partner].get_section_actual_state(sectionIndex) == SectionState::ON)
                 {
-                    std::cout << 1;
                     AOG.push_back(1);
                 }
                 else
                 {
-                    std::cout << 0;
                     AOG.push_back(0);
                 }
                 //AOG.push_back(0); // filler-byte, for the moment, not used. 2 bytes per section currently
                 sectionIndex++;
+                std::cout << std::endl;
             }
             // add the checksum
-            int16_t CK_A = 0;
-            for (uint8_t i = 2; i < AOG.size() - 1; i++)
+            uint8_t CK_A = 0;
+            for (uint8_t i = 2; i < AOG.size(); i++) // shouldn't be -1, as we have all data bytes at this point
             {
                 CK_A = (CK_A + AOG[i]);
             }
-            AOG.push_back(CK_A & 0xFF);
+            AOG.push_back(CK_A) ; // & 0xFF);
 
-            std::cout << std::endl;
-            for (const auto &byte : AOG)
-            {
-                std::cout << std::hex << static_cast<int>(byte) << " ";
-            }
-            std::cout << std::endl;
+            // for (const auto &byte : AOG)
+            // {
+            //     std::cout << std::dec << static_cast<int>(byte) << " ";
+            // }
+            // std::cout << std::endl;
 
             //udp::endpoint broadcast_endpoint(boost::asio::ip::address_v4::broadcast(), 9999);
-            boost::asio::ip::address_v4 listen_address = boost::asio::ip::address_v4::from_string("192.168.1.255");
-            udp::endpoint broadcast_endpoint(listen_address, 9999);
+            boost::asio::ip::address_v4 listen_address = boost::asio::ip::address_v4::from_string("192.168.1.255"); // wpon't work on 255.255.255.255, need to pick correct subnet
+            // better to follow the AOG example of scanning/setting subnets perhaps?
+            udp::endpoint broadcast_endpoint(listen_address, 9999); // AOG listens on 9999, not 8888
             udpConnection.send_to(boost::asio::buffer(AOG, sizeof(AOG)), broadcast_endpoint);
 
         }
@@ -433,7 +431,7 @@ int main()
     udpConnection.open(udp::v4());
     udpConnection.set_option(boost::asio::socket_base::broadcast(true));
     udpConnection.non_blocking(true);
-    udp::endpoint local_endpoint(boost::asio::ip::address_v4::from_string("192.168.1.10"), 8888);
+    udp::endpoint local_endpoint(boost::asio::ip::address_v4::from_string("192.168.1.10"), 8888); // it should work this out itself
     udpConnection.bind(local_endpoint);
 
     std::cout << "Local endpoint address: " << local_endpoint.address().to_string() << std::endl;
