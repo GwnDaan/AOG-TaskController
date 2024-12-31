@@ -45,7 +45,15 @@ using boost::asio::ip::udp;
 
 boost::asio::io_service io_service;
 udp::socket udpConnection(io_service);
+boost::asio::io_service io_serviceAD;
+udp::socket udpConnectionAD(io_serviceAD);
 static std::shared_ptr<isobus::ControlFunction> clientTC = nullptr;
+
+//TODO load these from settings file...
+uint8_t MDL_IP1 = 192;
+uint8_t MDL_IP2 = 168;
+uint8_t MDL_IP3 = 1; 
+
 
 static std::atomic_bool running = {true};
 void signal_handler(int)
@@ -246,7 +254,7 @@ public:
             // std::cout << std::endl;
 
             //udp::endpoint broadcast_endpoint(boost::asio::ip::address_v4::broadcast(), 9999);
-            boost::asio::ip::address_v4 listen_address = boost::asio::ip::address_v4::from_string("192.168.1.255"); // wpon't work on 255.255.255.255, need to pick correct subnet
+            boost::asio::ip::address_v4 listen_address = boost::asio::ip::address_v4::from_string("192.168.5.255"); // wpon't work on 255.255.255.255, need to pick correct subnet
             // better to follow the AOG example of scanning/setting subnets perhaps?
             udp::endpoint broadcast_endpoint(listen_address, 9999); // AOG listens on 9999, not 8888
             udpConnection.send_to(boost::asio::buffer(AOG, sizeof(AOG)), broadcast_endpoint);
@@ -346,6 +354,54 @@ public:
         }
     }
 
+    static udp::endpoint get_local_endpoint()
+    {
+      try {
+        boost::asio::io_context io_context;
+
+        // Retrieve a list of all network interfaces
+        boost::asio::ip::tcp::resolver resolver(io_context);
+        boost::asio::ip::tcp::resolver::query query(boost::asio::ip::host_name(), "");
+        boost::asio::ip::tcp::resolver::iterator endpoints = resolver.resolve(query);
+
+        std::cout << "Available IP addresses:" << std::endl;
+        for (auto it = endpoints; it != boost::asio::ip::tcp::resolver::iterator(); ++it) {
+            boost::asio::ip::address addr = it->endpoint().address();
+            std::cout << "- " << addr.to_string() << std::endl;
+            if(addr.is_v4()){
+                std::string ip_str = addr.to_string();
+
+                // Split the string into parts and check the prefix
+                std::istringstream ip_stream(ip_str);
+                std::string part;
+                std::vector<int> octets;
+
+                while (std::getline(ip_stream, part, '.')) {
+                    octets.push_back(std::stoi(part));
+                }
+
+                if (octets.size() == 4 && 
+                    octets[0] == MDL_IP1 && 
+                    octets[1] == MDL_IP2 &&
+                    octets[2] == MDL_IP3 ) {
+                    std::cout << "Local endpoint address: " << addr.to_string() << std::endl;
+                    return udp::endpoint(addr, 8888);
+                }
+            }
+        }
+      } catch (std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+      }
+      return udp::endpoint(
+            boost::asio::ip::address_v4::from_string(
+                (std::ostringstream() << static_cast<int>(MDL_IP1) << "."
+                    << static_cast<int>(MDL_IP2) << "."
+                    << static_cast<int>(MDL_IP3) << "."
+                    << "0").str()),
+            8888); 
+
+    }
+
 private:
     void send_section_setpoint_states(std::shared_ptr<isobus::ControlFunction> client, std::uint8_t ddiOffset)
     {
@@ -365,6 +421,7 @@ private:
 
         send_set_value_and_acknowledge(client, static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SetpointCondensedWorkState1_16) + ddiOffset, 2, value);
     }
+
 
     std::map<std::shared_ptr<isobus::ControlFunction>, ClientState> clients;
 };
@@ -422,7 +479,7 @@ int main()
     MyTCServer server(serverCF);
     auto &languageInterface = server.get_language_command_interface();
     languageInterface.set_language_code("en"); // This is the default, but you can change it if you want
-    languageInterface.set_country_code("NL");  // This is the default, but you can change it if you want
+    languageInterface.set_country_code("US");  // This is the default, but you can change it if you want
     server.initialize();
 
     std::cout << "Task controller server started." << std::endl;
@@ -431,14 +488,26 @@ int main()
     udpConnection.open(udp::v4());
     udpConnection.set_option(boost::asio::socket_base::broadcast(true));
     udpConnection.non_blocking(true);
-    udp::endpoint local_endpoint(boost::asio::ip::address_v4::from_string("192.168.1.10"), 8888); // it should work this out itself
-    udpConnection.bind(local_endpoint);
 
-    std::cout << "Local endpoint address: " << local_endpoint.address().to_string() << std::endl;
+    udpConnection.bind(MyTCServer::get_local_endpoint());
+
+//    std::cout << "Local endpoint address: " << get_local_endpoint().address().to_string() << std::endl;
     std::cout << "Broadcast address: " << boost::asio::ip::address_v4::broadcast().to_string() << std::endl;
+
+    // Set up anoter UDP server for Address Detection
+    udpConnectionAD.open(udp::v4());
+    udpConnectionAD.set_option(boost::asio::socket_base::broadcast(true));
+    udpConnectionAD.non_blocking(true);
+    udp::endpoint local_any_endpoint(boost::asio::ip::address_v4::any(), 8888); // Module Address bind is sent to here
+    std::cout << "udpConnectionAD " << std::endl;
+    udpConnectionAD.bind(local_any_endpoint);
+
+    std:cout << "udpConnectionAD address: " << local_any_endpoint.address().to_string() << std::endl;
 
     uint8_t rxBuffer[512];
     size_t rxIndex = 0;
+    uint8_t rxADBuffer[512];
+    size_t rxADIndex = 0;
     while (running)
     {
         // Peek to see if we have any data
@@ -512,6 +581,78 @@ int main()
 
         // Update again in a little bit
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+        //Check for AOG subnet
+        // AWRECEIVE
+        bytesReceived = udpConnectionAD.receive_from(boost::asio::buffer(rxADBuffer + rxADIndex, sizeof(rxADBuffer) - rxADIndex),  sender_endpoint, 0, ec);
+
+        if (ec == boost::asio::error::would_block)
+        {
+            // No data available
+        }
+        else if (!ec)
+        {
+
+//            std::cout << "Check for AOG subnet" << std::endl;
+            std::uint8_t index = 0;
+
+            rxADIndex += bytesReceived;
+            while (rxADIndex >= 8)
+            {
+                if (rxADBuffer[index++] == 0x80 && rxADBuffer[index++] == 0x81) //128, 129
+                {
+                    index = 2;
+                    std::uint8_t src = rxADBuffer[index++];
+                    std::uint8_t pgn = rxADBuffer[index++];
+                    if (src == 0x7F && pgn == 0xC9 && rxADBuffer[index++] == 0x05  // 127 is source, AGIO, 201 is subnet 
+                     && rxADBuffer[index++] == 0xC9 && rxADBuffer[index++] == 0xC9 ) 
+                    {
+                        //7-8-9 is IP0,IP1,IP2
+                        MDL_IP1 = static_cast<int>(rxADBuffer[index++]);
+                        MDL_IP2 = static_cast<int>(rxADBuffer[index++]);
+                        MDL_IP3 = static_cast<int>(rxADBuffer[index++]);
+
+                        std::cout << "Subnet from AOG: ";
+                        std::cout << static_cast<int>(MDL_IP1) << ".";
+                        std::cout << static_cast<int>(MDL_IP2) << ".";
+                        std::cout << static_cast<int>(MDL_IP3);
+                        std::cout << " rebinding UPD connection " << std::endl;
+                        udpConnection.close();
+                        udpConnection.open(udp::v4());
+                        udpConnection.set_option(boost::asio::socket_base::broadcast(true));
+                        udpConnection.non_blocking(true);
+                        udpConnection.bind(MyTCServer::get_local_endpoint());
+                    }
+                    else {
+                        // Unknown PGN, reset buffer
+//                        std::cout << "Unknown PGN: " << std::hex << static_cast<int>(pgn) << std::endl;
+                        rxADIndex = 0;
+                    }
+                }
+                else
+                {
+                    // Unknown start of message, reset buffer
+                    //std::cout << "Unknown start of message: " << std::hex << static_cast<int>(rxADBuffer[index - 2]) << " " << static_cast<int>(rxADBuffer[index - 1]) << std::endl;
+                    rxADIndex = 0;
+                }
+
+                // Move any remaining data to the front of the buffer
+                if (index < rxADIndex)
+                {  
+                    std::memmove(rxADBuffer, rxADBuffer + index, rxADIndex - index);
+                    rxADIndex -= index;
+                }
+                else
+                {
+                    rxADIndex = 0;
+                }
+            }
+        }
+        else
+        {
+            // Handle other errors
+            isobus::CANStackLogger::error("UDP receive error: " + ec.message());
+        }
     }
 
     server.terminate();
