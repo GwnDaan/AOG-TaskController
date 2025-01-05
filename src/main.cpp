@@ -109,7 +109,13 @@ public:
 		return SectionState::NOT_INSTALLED;
 	}
 
+	isobus::DeviceDescriptorObjectPool &get_pool()
+	{
+		return pool;
+	}
+
 private:
+	isobus::DeviceDescriptorObjectPool pool; ///< The device descriptor object pool (DDOP) for the TC
 	std::uint8_t numberOfSections;
 	std::vector<std::uint8_t> sectionSetpointStates; // 2 bits per section (0 = off, 1 = on, 2 = error, 3 = not installed)
 	std::vector<std::uint8_t> sectionActualStates; // 2 bits per section (0 = off, 1 = on, 2 = error, 3 = not installed)
@@ -131,7 +137,7 @@ public:
 
 	bool activate_object_pool(std::shared_ptr<isobus::ControlFunction> client, ObjectPoolActivationError &, ObjectPoolErrorCodes &, std::uint16_t &, std::uint16_t &) override
 	{
-		clientTC = client;
+		activeClients.push_back(client);
 		return true;
 	}
 
@@ -140,13 +146,15 @@ public:
 		return true;
 	}
 
-	bool deactivate_object_pool(std::shared_ptr<isobus::ControlFunction>) override
+	bool deactivate_object_pool(std::shared_ptr<isobus::ControlFunction> partnerCF) override
 	{
+		activeClients.erase(std::remove(activeClients.begin(), activeClients.end(), partnerCF), activeClients.end());
 		return true;
 	}
 
-	bool delete_device_descriptor_object_pool(std::shared_ptr<isobus::ControlFunction>, ObjectPoolDeletionErrors &) override
+	bool delete_device_descriptor_object_pool(std::shared_ptr<isobus::ControlFunction> partnerCF, ObjectPoolDeletionErrors &) override
 	{
+		clients.erase(partnerCF);
 		return true;
 	}
 
@@ -214,13 +222,6 @@ public:
 					clients[partner].set_section_actual_state(i + sectionIndexOffset, (processDataValue >> (2 * i)) & 0x03);
 				}
 
-				// AOG uses 1 bit per section, i.e. 0 = off, 1 = on
-				// std::uint8_t numberOfBytes = clients[partner].get_number_of_sections() / 8;
-				// if (clients[partner].get_number_of_sections() % 8 > 0)
-				// {
-				//     // Add an extra byte if there are any remaining sections that don't fit in a multiple of 8
-				//     numberOfBytes++;
-				// }
 				std::vector<uint8_t> AOG = { 0x80, 0x81, 0x70, 0x80, clients[partner].get_number_of_sections() }; // 0x700x80 = TC -> AOG, 0x700x00 = AOG -> TC
 
 				std::uint8_t sectionIndex = 0;
@@ -235,33 +236,23 @@ public:
 					{
 						AOG.push_back(0);
 					}
-					// AOG.push_back(0); // filler-byte, for the moment, not used. 2 bytes per section currently
 					sectionIndex++;
 					std::cout << std::endl;
 				}
-				// add the checksum
+
+				// Add the checksum as we have all data bytes at this point
 				uint8_t CK_A = 0;
-				for (uint8_t i = 2; i < AOG.size(); i++) // shouldn't be -1, as we have all data bytes at this point
+				for (uint8_t i = 2; i < AOG.size(); i++)
 				{
 					CK_A = (CK_A + AOG[i]);
 				}
-				AOG.push_back(CK_A); // & 0xFF);
+				AOG.push_back(CK_A);
 
-				// for (const auto &byte : AOG)
-				// {
-				//     std::cout << std::dec << static_cast<int>(byte) << " ";
-				// }
-				// std::cout << std::endl;
-
-				// udp::endpoint broadcast_endpoint(boost::asio::ip::address_v4::broadcast(), 9999);
-				boost::asio::ip::address_v4 listen_address = boost::asio::ip::address_v4::from_string(
-				  (std::ostringstream() << static_cast<int>(MDL_IP1) << "."
-				                        << static_cast<int>(MDL_IP2) << "."
-				                        << static_cast<int>(MDL_IP3) << "."
-				                        << "255")
-				    .str()); // wpon't work on 255.255.255.255, need to pick correct subnet
+				boost::asio::ip::address_v4 listen_address = boost::asio::ip::make_address_v4(std::to_string(MDL_IP1) + "." +
+				                                                                              std::to_string(MDL_IP2) + "." +
+				                                                                              std::to_string(MDL_IP3) + ".255");
 				// better to follow the AOG example of scanning/setting subnets perhaps?
-				udp::endpoint broadcast_endpoint(listen_address, 9999); // AOG listens on 9999, not 8888
+				udp::endpoint broadcast_endpoint(listen_address, 9999); // AOG listens on 9999
 				udpConnection.send_to(boost::asio::buffer(AOG, sizeof(AOG)), broadcast_endpoint);
 			}
 			break;
@@ -272,15 +263,18 @@ public:
 
 	bool store_device_descriptor_object_pool(std::shared_ptr<isobus::ControlFunction> partnerCF, const std::vector<std::uint8_t> &binaryPool, bool) override
 	{
-		// Initialize for the partner control function
-		clients[partnerCF] = ClientState();
+		// Initialize for the partner control function if it doesn't exist yet
+		if (clients.find(partnerCF) == clients.end())
+		{
+			clients[partnerCF] = ClientState();
+		}
 
-		isobus::DeviceDescriptorObjectPool pool;
-		pool.set_task_controller_compatibility_level(3);
-		if (pool.deserialize_binary_object_pool(binaryPool.data(), static_cast<std::uint32_t>(binaryPool.size()), partnerCF->get_NAME()))
+		clients[partnerCF].get_pool().set_task_controller_compatibility_level(3);
+		clients[partnerCF].get_pool().set_task_controller_compatibility_level(3);
+		if (clients[partnerCF].get_pool().deserialize_binary_object_pool(binaryPool.data(), static_cast<std::uint32_t>(binaryPool.size()), partnerCF->get_NAME()))
 		{
 			std::cout << "Successfully deserialized device descriptor object pool." << std::endl;
-			auto implement = isobus::DeviceDescriptorObjectPoolHelper::get_implement_geometry(pool);
+			auto implement = isobus::DeviceDescriptorObjectPoolHelper::get_implement_geometry(clients[partnerCF].get_pool());
 			std::uint8_t numberOfSections = 0;
 
 			std::cout << "Implement geometry: " << std::endl;
@@ -434,6 +428,7 @@ private:
 	}
 
 	std::map<std::shared_ptr<isobus::ControlFunction>, ClientState> clients;
+	std::vector<std::shared_ptr<isobus::ControlFunction>> activeClients;
 };
 
 int main()
