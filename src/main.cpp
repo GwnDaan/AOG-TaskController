@@ -11,6 +11,7 @@
 #include <atomic>
 #include <boost/asio.hpp>
 #include <csignal>
+#include <fstream>
 #include <future>
 #include <iostream>
 #include <memory>
@@ -24,6 +25,7 @@
 #include "isobus/isobus/can_stack_logger.hpp"
 #include "isobus/isobus/isobus_device_descriptor_object_pool_helpers.hpp"
 #include "isobus/isobus/isobus_preferred_addresses.hpp"
+#include "isobus/isobus/isobus_speed_distance_messages.hpp"
 #include "isobus/isobus/isobus_standard_data_description_indices.hpp"
 #include "isobus/isobus/isobus_task_controller_server.hpp"
 
@@ -47,7 +49,6 @@ boost::asio::io_service io_service;
 udp::socket udpConnection(io_service);
 boost::asio::io_service io_serviceAD;
 udp::socket udpConnectionAD(io_serviceAD);
-static std::shared_ptr<isobus::ControlFunction> clientTC = nullptr;
 
 // TODO load these from settings file...
 uint8_t MDL_IP1 = 192;
@@ -270,9 +271,22 @@ public:
 		}
 
 		clients[partnerCF].get_pool().set_task_controller_compatibility_level(3);
-		clients[partnerCF].get_pool().set_task_controller_compatibility_level(3);
 		if (clients[partnerCF].get_pool().deserialize_binary_object_pool(binaryPool.data(), static_cast<std::uint32_t>(binaryPool.size()), partnerCF->get_NAME()))
 		{
+			std::vector<std::uint8_t> binaryPool;
+			bool success = clients[partnerCF].get_pool().generate_binary_object_pool(binaryPool);
+			if (success)
+			{
+				std::ofstream outFile("ddop-" + std::to_string(std::time(nullptr)) + ".bin", std::ios::binary);
+				outFile.write(reinterpret_cast<const char *>(binaryPool.data()), binaryPool.size());
+				outFile.close();
+			}
+			else
+			{
+				std::cout << "Failed to serialize device descriptor object pool" << std::endl;
+				return false;
+			}
+
 			std::cout << "Successfully deserialized device descriptor object pool." << std::endl;
 			auto implement = isobus::DeviceDescriptorObjectPoolHelper::get_implement_geometry(clients[partnerCF].get_pool());
 			std::uint8_t numberOfSections = 0;
@@ -397,14 +411,8 @@ public:
 		{
 			std::cerr << "Error: " << e.what() << std::endl;
 		}
-		return udp::endpoint(
-		  boost::asio::ip::address_v4::from_string(
-		    (std::ostringstream() << static_cast<int>(MDL_IP1) << "."
-		                          << static_cast<int>(MDL_IP2) << "."
-		                          << static_cast<int>(MDL_IP3) << "."
-		                          << "0")
-		      .str()),
-		  8888);
+
+		throw std::runtime_error("Failed to find a suitable local endpoint address.");
 	}
 
 private:
@@ -486,6 +494,10 @@ int main()
 	languageInterface.set_country_code("US"); // This is the default, but you can change it if you want
 	server.initialize();
 
+	// Initialize speed and distance messages
+	isobus::SpeedMessagesInterface speedMessagesInterface(serverCF, false, false, true, false);
+	speedMessagesInterface.initialize();
+
 	std::cout << "Task controller server started." << std::endl;
 
 	// Set up the UDP server
@@ -494,9 +506,6 @@ int main()
 	udpConnection.non_blocking(true);
 
 	udpConnection.bind(MyTCServer::get_local_endpoint());
-
-	//    std::cout << "Local endpoint address: " << get_local_endpoint().address().to_string() << std::endl;
-	std::cout << "Broadcast address: " << boost::asio::ip::address_v4::broadcast().to_string() << std::endl;
 
 	// Set up anoter UDP server for Address Detection
 	udpConnectionAD.open(udp::v4());
@@ -537,7 +546,7 @@ std:
 					std::uint8_t src = rxBuffer[index++];
 					std::uint8_t pgn = rxBuffer[index++];
 					std::uint8_t len = rxBuffer[index++];
-					if (src == 0x70 && pgn == 0x00) // 239 - EF Machine Data
+					if (src == 0x70 && pgn == 0x00)
 					{
 						// We only care about the sections (index + 6)
 						std::vector<bool> sectionStates;
@@ -546,11 +555,21 @@ std:
 							sectionStates.push_back(rxBuffer[index++] == 1); // no offset now, new PGN
 						}
 						server.update_section_states(sectionStates);
-						// index += len + 1; // what happens here if >8 sections?
 					}
-					else if (src == 0x70)
+					else if (src == 0x7F && pgn == 0xFE) // 254 - Steer Data
 					{
-						// std::cout << "Saw my own ISOBUS traffic" << std::endl;
+						std::uint16_t speed = (rxBuffer[index + 1] << 8) | rxBuffer[index];
+						std::uint8_t status = rxBuffer[index + 2];
+
+						// Convert from km/h to mm/s
+						speed = speed * 1E5 / 3600;
+
+						speedMessagesInterface.machineSelectedSpeedTransmitData.set_speed_source(isobus::SpeedMessagesInterface::MachineSelectedSpeedData::SpeedSource::NavigationBasedSpeed);
+						speedMessagesInterface.machineSelectedSpeedTransmitData.set_machine_direction_of_travel(isobus::SpeedMessagesInterface::MachineDirection::Forward); // TODO: Implement direction
+						speedMessagesInterface.machineSelectedSpeedTransmitData.set_machine_speed(speed);
+						speedMessagesInterface.machineSelectedSpeedTransmitData.set_machine_distance(0); // TODO: Implement distance
+
+						index += len;
 					}
 					else
 					{
@@ -585,6 +604,7 @@ std:
 		}
 
 		server.update();
+		speedMessagesInterface.update();
 
 		// Update again in a little bit
 		std::this_thread::sleep_for(std::chrono::milliseconds(5));
