@@ -273,6 +273,9 @@ public:
 		clients[partnerCF].get_pool().set_task_controller_compatibility_level(3);
 		if (clients[partnerCF].get_pool().deserialize_binary_object_pool(binaryPool.data(), static_cast<std::uint32_t>(binaryPool.size()), partnerCF->get_NAME()))
 		{
+			std::ofstream outFile("partial-ddop-" + std::to_string(std::time(nullptr)) + ".bin", std::ios::binary);
+			outFile.write(reinterpret_cast<const char *>(binaryPool.data()), binaryPool.size());
+			outFile.close();
 			std::vector<std::uint8_t> binaryPool;
 			bool success = clients[partnerCF].get_pool().generate_binary_object_pool(binaryPool);
 			if (success)
@@ -284,7 +287,6 @@ public:
 			else
 			{
 				std::cout << "Failed to serialize device descriptor object pool" << std::endl;
-				return false;
 			}
 
 			std::cout << "Successfully deserialized device descriptor object pool." << std::endl;
