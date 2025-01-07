@@ -53,12 +53,39 @@ udp::socket udpConnectionAD(io_serviceAD);
 // TODO load these from settings file...
 uint8_t MDL_IP1 = 192;
 uint8_t MDL_IP2 = 168;
-uint8_t MDL_IP3 = 5;
+uint8_t MDL_IP3 = 6;
 
 static std::atomic_bool running = { true };
 void signal_handler(int)
 {
 	running = false;
+}
+
+static std::atomic_bool autoMode = { false };
+
+void read_auto_mode()
+{
+	std::cout << "Enter mode ('A' for auto, 'M' for manual):" << std::endl;
+	std::string input;
+	while (running)
+	{
+		std::getline(std::cin, input);
+
+		if (input == "A" || input == "a")
+		{
+			std::cout << ">>> Auto mode selected." << std::endl;
+			autoMode = true;
+		}
+		else if (input == "M" || input == "m")
+		{
+			std::cout << ">>> Manual mode selected." << std::endl;
+			autoMode = false;
+		}
+		else
+		{
+			std::cout << "Invalid input. Please enter 'A' for auto mode or 'M' for manual mode." << std::endl;
+		}
+	}
 }
 
 class ClientState
@@ -110,6 +137,48 @@ public:
 		return SectionState::NOT_INSTALLED;
 	}
 
+	bool is_any_section_setpoint_on() const
+	{
+		for (std::uint8_t state : sectionSetpointStates)
+		{
+			if (state == SectionState::ON)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	bool get_setpoint_work_state() const
+	{
+		return setpointWorkState;
+	}
+
+	void set_setpoint_work_state(bool state)
+	{
+		setpointWorkState = state;
+	}
+
+	bool get_actual_work_state() const
+	{
+		return actualWorkState;
+	}
+
+	void set_actual_work_state(bool state)
+	{
+		actualWorkState = state;
+	}
+
+	bool get_auto_mode() const
+	{
+		return isAutoMode;
+	}
+
+	void set_auto_mode(bool state)
+	{
+		isAutoMode = state;
+	}
+
 	isobus::DeviceDescriptorObjectPool &get_pool()
 	{
 		return pool;
@@ -120,6 +189,9 @@ private:
 	std::uint8_t numberOfSections;
 	std::vector<std::uint8_t> sectionSetpointStates; // 2 bits per section (0 = off, 1 = on, 2 = error, 3 = not installed)
 	std::vector<std::uint8_t> sectionActualStates; // 2 bits per section (0 = off, 1 = on, 2 = error, 3 = not installed)
+	bool setpointWorkState = false; ///< The overall work state desired
+	bool actualWorkState = false; ///< The overall work state actual
+	bool isAutoMode = false; ///< Stores auto vs manual mode setting
 };
 
 // Create the task controller server object, this will handle all the ISOBUS communication for us
@@ -223,6 +295,13 @@ public:
 					clients[partner].set_section_actual_state(i + sectionIndexOffset, (processDataValue >> (2 * i)) & 0x03);
 				}
 
+				std::cout << "Received actual condensed work state for element number " << int(elementNumber) << " and DDI " << int(dataDescriptionIndex) << " with states: ";
+				for (std::uint8_t i = 0; i < NUMBER_SECTIONS_PER_CONDENSED_MESSAGE; i++)
+				{
+					std::cout << static_cast<int>(clients[partner].get_section_actual_state(sectionIndexOffset + i)) << " ";
+				}
+				std::cout << std::endl;
+
 				std::vector<uint8_t> AOG = { 0x80, 0x81, 0x70, 0x80, clients[partner].get_number_of_sections() }; // 0x700x80 = TC -> AOG, 0x700x00 = AOG -> TC
 
 				std::uint8_t sectionIndex = 0;
@@ -238,7 +317,6 @@ public:
 						AOG.push_back(0);
 					}
 					sectionIndex++;
-					std::cout << std::endl;
 				}
 
 				// Add the checksum as we have all data bytes at this point
@@ -257,6 +335,19 @@ public:
 				udpConnection.send_to(boost::asio::buffer(AOG, sizeof(AOG)), broadcast_endpoint);
 			}
 			break;
+
+			case static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SectionControlState):
+			{
+				std::cout << "Received section control state: " << processDataValue << std::endl;
+				clients[partner].set_auto_mode(processDataValue == 1);
+			}
+			break;
+
+			case static_cast<std::uint16_t>(isobus::DataDescriptionIndex::ActualWorkState):
+			{
+				std::cout << "Received actual work state: " << processDataValue << std::endl;
+				clients[partner].set_setpoint_work_state(processDataValue == 1);
+			}
 		}
 
 		return true;
@@ -273,21 +364,17 @@ public:
 		clients[partnerCF].get_pool().set_task_controller_compatibility_level(3);
 		if (clients[partnerCF].get_pool().deserialize_binary_object_pool(binaryPool.data(), static_cast<std::uint32_t>(binaryPool.size()), partnerCF->get_NAME()))
 		{
-			std::ofstream outFile("partial-ddop-" + std::to_string(std::time(nullptr)) + ".bin", std::ios::binary);
-			outFile.write(reinterpret_cast<const char *>(binaryPool.data()), binaryPool.size());
-			outFile.close();
-			std::vector<std::uint8_t> binaryPool;
-			bool success = clients[partnerCF].get_pool().generate_binary_object_pool(binaryPool);
-			if (success)
-			{
-				std::ofstream outFile("ddop-" + std::to_string(std::time(nullptr)) + ".bin", std::ios::binary);
-				outFile.write(reinterpret_cast<const char *>(binaryPool.data()), binaryPool.size());
-				outFile.close();
-			}
-			else
-			{
-				std::cout << "Failed to serialize device descriptor object pool" << std::endl;
-			}
+			// std::ofstream outFile("partial-ddop-" + std::to_string(std::time(nullptr)) + ".bin", std::ios::binary);
+			// outFile.write(reinterpret_cast<const char *>(binaryPool.data()), binaryPool.size());
+			// outFile.close();
+			// std::vector<std::uint8_t> binaryPool;
+			// bool success = clients[partnerCF].get_pool().generate_binary_object_pool(binaryPool);
+			// if (success)
+			// {
+			// 	std::ofstream outFile("ddop-" + std::to_string(std::time(nullptr)) + ".bin", std::ios::binary);
+			// 	outFile.write(reinterpret_cast<const char *>(binaryPool.data()), binaryPool.size());
+			// 	outFile.close();
+			// }
 
 			std::cout << "Successfully deserialized device descriptor object pool." << std::endl;
 			auto implement = isobus::DeviceDescriptorObjectPoolHelper::get_implement_geometry(clients[partnerCF].get_pool());
@@ -368,6 +455,18 @@ public:
 		}
 	}
 
+	void update_auto_mode(bool isAutoMode)
+	{
+		for (auto &client : clients)
+		{
+			if (client.second.get_auto_mode() != isAutoMode)
+			{
+				client.second.set_auto_mode(isAutoMode);
+				send_section_control_state(client.first, isAutoMode);
+			}
+		}
+	}
+
 	static udp::endpoint get_local_endpoint()
 	{
 		try
@@ -420,21 +519,35 @@ public:
 private:
 	void send_section_setpoint_states(std::shared_ptr<isobus::ControlFunction> client, std::uint8_t ddiOffset)
 	{
-		std::uint8_t sectionOffset = ddiOffset * 16;
+		std::uint8_t sectionOffset = ddiOffset * NUMBER_SECTIONS_PER_CONDENSED_MESSAGE;
 		std::uint32_t value = 0;
-		for (std::uint8_t i = 0; i < 16; i++)
+		for (std::uint8_t i = 0; i < NUMBER_SECTIONS_PER_CONDENSED_MESSAGE; i++)
 		{
 			value |= (clients[client].get_section_setpoint_state(sectionOffset + i) << (2 * i));
 		}
 
 		std::cout << "Sending setpoint states for DDI offset " << static_cast<int>(ddiOffset) << " with states: ";
-		for (std::uint8_t i = 0; i < 16; i++)
+		for (std::uint8_t i = 0; i < NUMBER_SECTIONS_PER_CONDENSED_MESSAGE; i++)
 		{
 			std::cout << static_cast<int>(clients[client].get_section_setpoint_state(sectionOffset + i)) << " ";
 		}
 		std::cout << std::endl;
 
 		send_set_value_and_acknowledge(client, static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SetpointCondensedWorkState1_16) + ddiOffset, 2, value);
+
+		bool setpointWorkState = clients[client].is_any_section_setpoint_on();
+		if (clients[client].get_setpoint_work_state() != setpointWorkState)
+		{
+			std::cout << "Sending setpoint work state: " << (setpointWorkState ? "on" : "off") << std::endl;
+			send_set_value_and_acknowledge(client, static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SetpointWorkState), 2, setpointWorkState ? 1 : 0);
+			clients[client].set_setpoint_work_state(setpointWorkState);
+		}
+	}
+
+	void send_section_control_state(std::shared_ptr<isobus::ControlFunction> client, bool isAutoMode)
+	{
+		std::cout << "Sending section control state: " << (isAutoMode ? "auto" : "manual") << std::endl;
+		send_set_value_and_acknowledge(client, static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SectionControlState), 2, isAutoMode ? 1 : 0);
 	}
 
 	std::map<std::shared_ptr<isobus::ControlFunction>, ClientState> clients;
@@ -443,6 +556,8 @@ private:
 
 int main()
 {
+	std::thread inputThread(read_auto_mode); // TODO: read from AOG
+
 	std::signal(SIGINT, signal_handler);
 
 	auto canDriver = std::make_shared<isobus::NTCANPlugin>(42);
@@ -605,6 +720,7 @@ std:
 			isobus::CANStackLogger::error("UDP receive error: " + ec.message());
 		}
 
+		server.update_auto_mode(autoMode);
 		server.update();
 		speedMessagesInterface.update();
 
@@ -684,6 +800,7 @@ std:
 		}
 	}
 
+	inputThread.join();
 	server.terminate();
 	isobus::CANHardwareInterface::stop();
 }
