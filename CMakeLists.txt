@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 project("AOGTaskController")
 
-set(BUILD_EXAMPLES ON)
+set(BUILD_EXAMPLES OFF)
+SET(BUILD_TESTING OFF)
 
 if(WIN32)
   set(CAN_DRIVER "WindowsPCANBasic")
@@ -22,15 +23,16 @@ set(BOOST_ENABLE_CMAKE ON)
 FetchContent_Declare(
   Boost
   URL https://github.com/boostorg/boost/releases/download/boost-1.86.0/boost-1.86.0-cmake.7z
-      USES_TERMINAL_DOWNLOAD
-      TRUE
-  DOWNLOAD_NO_EXTRACT FALSE)
+  USES_TERMINAL_DOWNLOAD TRUE
+  DOWNLOAD_NO_EXTRACT FALSE
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 FetchContent_MakeAvailable(Boost)
 
 FetchContent_Declare(
   isobus
   GIT_REPOSITORY https://github.com/Open-Agriculture/AgIsoStack-plus-plus.git
-  GIT_TAG ca7ffb744a853a97759ae1d07137765f59902915)
+  GIT_TAG 215079c5e896dfed49099a3347560321d1becca1
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 FetchContent_MakeAvailable(isobus)
 
 find_package(Threads REQUIRED)
