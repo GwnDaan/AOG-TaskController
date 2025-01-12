@@ -65,7 +65,7 @@ static std::atomic_bool autoMode = { false };
 
 void read_auto_mode()
 {
-	std::cout << "Enter mode ('A' for auto, 'M' for manual):" << std::endl;
+	std::cout << "Enter mode ('A' for enabled, 'M' for disabled):" << std::endl;
 	std::string input;
 	while (running)
 	{
@@ -73,17 +73,17 @@ void read_auto_mode()
 
 		if (input == "A" || input == "a")
 		{
-			std::cout << ">>> Auto mode selected." << std::endl;
+			std::cout << ">>> Section control enabled." << std::endl;
 			autoMode = true;
 		}
 		else if (input == "M" || input == "m")
 		{
-			std::cout << ">>> Manual mode selected." << std::endl;
+			std::cout << ">>> Section control disabled." << std::endl;
 			autoMode = false;
 		}
 		else
 		{
-			std::cout << "Invalid input. Please enter 'A' for auto mode or 'M' for manual mode." << std::endl;
+			std::cout << "Invalid input. Please enter 'A' for section control enabled, or 'M' for disabled." << std::endl;
 		}
 	}
 }
@@ -169,14 +169,14 @@ public:
 		actualWorkState = state;
 	}
 
-	bool get_auto_mode() const
+	bool is_section_control_enabled() const
 	{
-		return isAutoMode;
+		return isSectionControlEnabled;
 	}
 
-	void set_auto_mode(bool state)
+	void set_section_control_enabled(bool state)
 	{
-		isAutoMode = state;
+		isSectionControlEnabled = state;
 	}
 
 	isobus::DeviceDescriptorObjectPool &get_pool()
@@ -191,7 +191,7 @@ private:
 	std::vector<std::uint8_t> sectionActualStates; // 2 bits per section (0 = off, 1 = on, 2 = error, 3 = not installed)
 	bool setpointWorkState = false; ///< The overall work state desired
 	bool actualWorkState = false; ///< The overall work state actual
-	bool isAutoMode = false; ///< Stores auto vs manual mode setting
+	bool isSectionControlEnabled = false; ///< Stores auto vs manual mode setting
 };
 
 // Create the task controller server object, this will handle all the ISOBUS communication for us
@@ -339,7 +339,7 @@ public:
 			case static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SectionControlState):
 			{
 				std::cout << "Received section control state: " << processDataValue << std::endl;
-				clients[partner].set_auto_mode(processDataValue == 1);
+				clients[partner].set_section_control_enabled(processDataValue == 1);
 			}
 			break;
 
@@ -455,14 +455,14 @@ public:
 		}
 	}
 
-	void update_auto_mode(bool isAutoMode)
+	void update_section_control_enabled(bool enabled)
 	{
 		for (auto &client : clients)
 		{
-			if (client.second.get_auto_mode() != isAutoMode)
+			if (client.second.is_section_control_enabled() != enabled)
 			{
-				client.second.set_auto_mode(isAutoMode);
-				send_section_control_state(client.first, isAutoMode);
+				client.second.set_section_control_enabled(enabled);
+				send_section_control_state(client.first, enabled);
 			}
 		}
 	}
@@ -519,6 +519,12 @@ public:
 private:
 	void send_section_setpoint_states(std::shared_ptr<isobus::ControlFunction> client, std::uint8_t ddiOffset)
 	{
+		if (!clients[client].is_section_control_enabled())
+		{
+			// According to standard, the section setpoint states should only be sent when in auto mode
+			return;
+		}
+
 		std::uint8_t sectionOffset = ddiOffset * NUMBER_SECTIONS_PER_CONDENSED_MESSAGE;
 		std::uint32_t value = 0;
 		for (std::uint8_t i = 0; i < NUMBER_SECTIONS_PER_CONDENSED_MESSAGE; i++)
@@ -536,7 +542,7 @@ private:
 		send_set_value_and_acknowledge(client, static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SetpointCondensedWorkState1_16) + ddiOffset, 2, value);
 
 		bool setpointWorkState = clients[client].is_any_section_setpoint_on();
-		if ((clients[client].get_setpoint_work_state() != setpointWorkState) && clients[client].get_auto_mode())
+		if ((clients[client].get_setpoint_work_state() != setpointWorkState))
 		{
 			std::cout << "Sending setpoint work state: " << (setpointWorkState ? "on" : "off") << std::endl;
 			send_set_value_and_acknowledge(client, static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SetpointWorkState), 2, setpointWorkState ? 1 : 0);
@@ -544,10 +550,10 @@ private:
 		}
 	}
 
-	void send_section_control_state(std::shared_ptr<isobus::ControlFunction> client, bool isAutoMode)
+	void send_section_control_state(std::shared_ptr<isobus::ControlFunction> client, bool enabled)
 	{
-		std::cout << "Sending section control state: " << (isAutoMode ? "auto" : "manual") << std::endl;
-		send_set_value_and_acknowledge(client, static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SectionControlState), 2, isAutoMode ? 1 : 0);
+		std::cout << "Sending section control state: " << (enabled ? "enabled" : "disabled") << std::endl;
+		send_set_value_and_acknowledge(client, static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SectionControlState), 2, enabled ? 1 : 0);
 	}
 
 	std::map<std::shared_ptr<isobus::ControlFunction>, ClientState> clients;
@@ -720,7 +726,7 @@ std:
 			isobus::CANStackLogger::error("UDP receive error: " + ec.message());
 		}
 
-		server.update_auto_mode(autoMode);
+		server.update_section_control_enabled(autoMode);
 		server.update();
 		speedMessagesInterface.update();
 
