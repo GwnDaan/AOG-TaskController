@@ -61,29 +61,23 @@ void signal_handler(int)
 	running = false;
 }
 
-static std::atomic_bool autoMode = { false };
+static std::atomic_bool toggleSectionControl = { false };
 
 void read_auto_mode()
 {
-	std::cout << "Enter mode ('A' for enabled, 'M' for disabled):" << std::endl;
+	std::cout << "Enter 'T' to toggle section control:" << std::endl;
 	std::string input;
 	while (running)
 	{
 		std::getline(std::cin, input);
 
-		if (input == "A" || input == "a")
+		if (input == "T" || input == "t")
 		{
-			std::cout << ">>> Section control enabled." << std::endl;
-			autoMode = true;
-		}
-		else if (input == "M" || input == "m")
-		{
-			std::cout << ">>> Section control disabled." << std::endl;
-			autoMode = false;
+			toggleSectionControl = true;
 		}
 		else
 		{
-			std::cout << "Invalid input. Please enter 'A' for section control enabled, or 'M' for disabled." << std::endl;
+			std::cout << "Invalid input, please enter 'T' to toggle section control" << std::endl;
 		}
 	}
 }
@@ -873,7 +867,16 @@ std:
 		}
 
 		server.request_measurement_commands();
-		server.update_section_control_enabled(autoMode);
+		if (toggleSectionControl)
+		{
+			bool currentSectionControlState = false;
+			if (!server.get_clients().empty())
+			{
+				currentSectionControlState = server.get_clients().begin()->second.is_section_control_enabled();
+			}
+			server.update_section_control_enabled(!currentSectionControlState);
+			toggleSectionControl = false;
+		}
 		server.update();
 		speedMessagesInterface.update();
 
