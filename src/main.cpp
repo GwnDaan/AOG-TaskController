@@ -536,7 +536,7 @@ private:
 		send_set_value_and_acknowledge(client, static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SetpointCondensedWorkState1_16) + ddiOffset, 2, value);
 
 		bool setpointWorkState = clients[client].is_any_section_setpoint_on();
-		if (clients[client].get_setpoint_work_state() != setpointWorkState)
+		if ((clients[client].get_setpoint_work_state() != setpointWorkState) && clients[client].get_auto_mode())
 		{
 			std::cout << "Sending setpoint work state: " << (setpointWorkState ? "on" : "off") << std::endl;
 			send_set_value_and_acknowledge(client, static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SetpointWorkState), 2, setpointWorkState ? 1 : 0);
