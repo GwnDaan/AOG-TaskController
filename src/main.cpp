@@ -184,8 +184,37 @@ public:
 		return pool;
 	}
 
+	bool are_measurement_commands_sent() const
+	{
+		return areMeasurementCommandsSent;
+	}
+
+	void mark_measurement_commands_sent()
+	{
+		areMeasurementCommandsSent = true;
+	}
+
+	std::uint16_t get_element_number_for_ddi(isobus::DataDescriptionIndex ddi) const
+	{
+		auto it = ddiToElementNumber.find(ddi);
+		if (it != ddiToElementNumber.end())
+		{
+			return it->second;
+		}
+		std::cerr << "Cached element number not found for DDI " << static_cast<int>(ddi) << std::endl;
+		return 0;
+	}
+
+	void set_element_number_for_ddi(isobus::DataDescriptionIndex ddi, std::uint16_t elementNumber)
+	{
+		ddiToElementNumber[ddi] = elementNumber;
+	}
+
 private:
 	isobus::DeviceDescriptorObjectPool pool; ///< The device descriptor object pool (DDOP) for the TC
+	bool areMeasurementCommandsSent = false; ///< Whether or not the measurement commands have been sent
+	std::map<isobus::DataDescriptionIndex, std::uint16_t> ddiToElementNumber; ///< Mapping of DDI to element number // TODO: better way to do this?
+
 	std::uint8_t numberOfSections;
 	std::vector<std::uint8_t> sectionSetpointStates; // 2 bits per section (0 = off, 1 = on, 2 = error, 3 = not installed)
 	std::vector<std::uint8_t> sectionActualStates; // 2 bits per section (0 = off, 1 = on, 2 = error, 3 = not installed)
@@ -204,13 +233,87 @@ public:
 	                       64, // AOG limits to 64 sections
 	                       16, // 16 channels for position based control
 	                       isobus::TaskControllerOptions()
-	                         .with_implement_section_control())
+	                         .with_implement_section_control(), // We support section control
+	                       TaskControllerVersion::FirstPublishedEdition)
 	{
 	}
 
-	bool activate_object_pool(std::shared_ptr<isobus::ControlFunction> client, ObjectPoolActivationError &, ObjectPoolErrorCodes &, std::uint16_t &, std::uint16_t &) override
+	bool activate_object_pool(std::shared_ptr<isobus::ControlFunction> partnerCF, ObjectPoolActivationError &, ObjectPoolErrorCodes &, std::uint16_t &, std::uint16_t &) override
 	{
-		activeClients.push_back(client);
+		// Safety check to make sure partnerCF has uploaded a DDOP
+		if (uploadedPools.find(partnerCF) == uploadedPools.end())
+		{
+			return false;
+		}
+
+		// Initialize a new client state
+		auto state = ClientState();
+		// state.get_pool().set_task_controller_compatibility_level(get_active_client(partnerCF)->reportedVersion);
+		state.get_pool().set_task_controller_compatibility_level(static_cast<std::uint8_t>(TaskControllerVersion::FirstPublishedEdition));
+
+		bool deserialized = false;
+		while (!uploadedPools[partnerCF].empty())
+		{
+			auto binaryPool = uploadedPools[partnerCF].front();
+			uploadedPools[partnerCF].pop();
+			deserialized = state.get_pool().deserialize_binary_object_pool(binaryPool.data(), static_cast<std::uint32_t>(binaryPool.size()), partnerCF->get_NAME());
+
+			// std::ofstream outFile("partial-ddop-" + std::to_string(std::time(nullptr)) + ".bin", std::ios::binary);
+			// outFile.write(reinterpret_cast<const char *>(binaryPool.data()), binaryPool.size());
+			// outFile.close();
+		}
+		if (deserialized)
+		{
+			// std::vector<std::uint8_t> binaryPool;
+			// bool success = state.get_pool().generate_binary_object_pool(binaryPool);
+			// if (success)
+			// {
+			// 	std::ofstream outFile("ddop-" + std::to_string(std::time(nullptr)) + ".bin", std::ios::binary);
+			// 	outFile.write(reinterpret_cast<const char *>(binaryPool.data()), binaryPool.size());
+			// 	outFile.close();
+			// }
+
+			std::cout << "Successfully deserialized device descriptor object pool." << std::endl;
+			auto implement = isobus::DeviceDescriptorObjectPoolHelper::get_implement_geometry(state.get_pool());
+			std::uint8_t numberOfSections = 0;
+
+			std::cout << "Implement geometry: " << std::endl;
+			std::cout << "Number of booms=" << implement.booms.size() << std::endl;
+			for (const auto &boom : implement.booms)
+			{
+				std::cout << "Boom: id=" << static_cast<int>(boom.elementNumber) << std::endl;
+				for (const auto &subBoom : boom.subBooms)
+				{
+					std::cout << "SubBoom: id=" << static_cast<int>(subBoom.elementNumber) << std::endl;
+					for (const auto &section : subBoom.sections)
+					{
+						numberOfSections++;
+						std::cout << "Section: id=" << static_cast<int>(section.elementNumber) << std::endl;
+						std::cout << "X Offset: " << section.xOffset_mm.get() << std::endl;
+						std::cout << "Y Offset: " << section.yOffset_mm.get() << std::endl;
+						std::cout << "Z Offset: " << section.zOffset_mm.get() << std::endl;
+						std::cout << "Width: " << section.width_mm.get() << std::endl;
+					}
+				}
+				for (const auto &section : boom.sections)
+				{
+					numberOfSections++;
+					std::cout << "Section: id=" << static_cast<int>(section.elementNumber) << std::endl;
+					std::cout << "X Offset: " << section.xOffset_mm.get() << std::endl;
+					std::cout << "Y Offset: " << section.yOffset_mm.get() << std::endl;
+					std::cout << "Z Offset: " << section.zOffset_mm.get() << std::endl;
+					std::cout << "Width: " << section.width_mm.get() << std::endl;
+				}
+			}
+			state.set_number_of_sections(numberOfSections);
+		}
+		else
+		{
+			std::cout << "Failed to deserialize device descriptor object pool." << std::endl;
+			return false;
+		}
+
+		clients[partnerCF] = state;
 		return true;
 	}
 
@@ -221,13 +324,15 @@ public:
 
 	bool deactivate_object_pool(std::shared_ptr<isobus::ControlFunction> partnerCF) override
 	{
-		activeClients.erase(std::remove(activeClients.begin(), activeClients.end(), partnerCF), activeClients.end());
+		clients.erase(partnerCF);
+		uploadedPools.erase(partnerCF);
 		return true;
 	}
 
 	bool delete_device_descriptor_object_pool(std::shared_ptr<isobus::ControlFunction> partnerCF, ObjectPoolDeletionErrors &) override
 	{
 		clients.erase(partnerCF);
+		uploadedPools.erase(partnerCF);
 		return true;
 	}
 
@@ -353,74 +458,113 @@ public:
 		return true;
 	}
 
-	bool store_device_descriptor_object_pool(std::shared_ptr<isobus::ControlFunction> partnerCF, const std::vector<std::uint8_t> &binaryPool, bool) override
+	bool store_device_descriptor_object_pool(std::shared_ptr<isobus::ControlFunction> partnerCF, const std::vector<std::uint8_t> &binaryPool, bool appendToPool) override
 	{
-		// Initialize for the partner control function if it doesn't exist yet
-		if (clients.find(partnerCF) == clients.end())
+		if (uploadedPools.find(partnerCF) == uploadedPools.end())
 		{
-			clients[partnerCF] = ClientState();
+			uploadedPools[partnerCF] = std::queue<std::vector<std::uint8_t>>();
 		}
-
-		clients[partnerCF].get_pool().set_task_controller_compatibility_level(3);
-		if (clients[partnerCF].get_pool().deserialize_binary_object_pool(binaryPool.data(), static_cast<std::uint32_t>(binaryPool.size()), partnerCF->get_NAME()))
-		{
-			// std::ofstream outFile("partial-ddop-" + std::to_string(std::time(nullptr)) + ".bin", std::ios::binary);
-			// outFile.write(reinterpret_cast<const char *>(binaryPool.data()), binaryPool.size());
-			// outFile.close();
-			// std::vector<std::uint8_t> binaryPool;
-			// bool success = clients[partnerCF].get_pool().generate_binary_object_pool(binaryPool);
-			// if (success)
-			// {
-			// 	std::ofstream outFile("ddop-" + std::to_string(std::time(nullptr)) + ".bin", std::ios::binary);
-			// 	outFile.write(reinterpret_cast<const char *>(binaryPool.data()), binaryPool.size());
-			// 	outFile.close();
-			// }
-
-			std::cout << "Successfully deserialized device descriptor object pool." << std::endl;
-			auto implement = isobus::DeviceDescriptorObjectPoolHelper::get_implement_geometry(clients[partnerCF].get_pool());
-			std::uint8_t numberOfSections = 0;
-
-			std::cout << "Implement geometry: " << std::endl;
-			std::cout << "Number of booms=" << implement.booms.size() << std::endl;
-			for (const auto &boom : implement.booms)
-			{
-				std::cout << "Boom: id=" << static_cast<int>(boom.elementNumber) << std::endl;
-				for (const auto &subBoom : boom.subBooms)
-				{
-					std::cout << "SubBoom: id=" << static_cast<int>(subBoom.elementNumber) << std::endl;
-					for (const auto &section : subBoom.sections)
-					{
-						numberOfSections++;
-						std::cout << "Section: id=" << static_cast<int>(section.elementNumber) << std::endl;
-						std::cout << "X Offset: " << section.xOffset_mm.get() << std::endl;
-						std::cout << "Y Offset: " << section.yOffset_mm.get() << std::endl;
-						std::cout << "Z Offset: " << section.zOffset_mm.get() << std::endl;
-						std::cout << "Width: " << section.width_mm.get() << std::endl;
-					}
-				}
-				for (const auto &section : boom.sections)
-				{
-					numberOfSections++;
-					std::cout << "Section: id=" << static_cast<int>(section.elementNumber) << std::endl;
-					std::cout << "X Offset: " << section.xOffset_mm.get() << std::endl;
-					std::cout << "Y Offset: " << section.yOffset_mm.get() << std::endl;
-					std::cout << "Z Offset: " << section.zOffset_mm.get() << std::endl;
-					std::cout << "Width: " << section.width_mm.get() << std::endl;
-				}
-			}
-			clients[partnerCF].set_number_of_sections(numberOfSections);
-		}
-		else
-		{
-			std::cout << "Failed to deserialize device descriptor object pool." << std::endl;
-			return false;
-		}
+		uploadedPools[partnerCF].push(binaryPool);
 		return true;
 	}
 
 	std::map<std::shared_ptr<isobus::ControlFunction>, ClientState> &get_clients()
 	{
 		return clients;
+	}
+
+	void request_measurement_commands()
+	{
+		for (auto &client : clients)
+		{
+			if (!client.second.are_measurement_commands_sent())
+			{
+				// Find all actual (condensed) work state DDIs and request them to trigger "On Change" and "Time Interval"
+				for (std::uint32_t i = 0; i < client.second.get_pool().size(); i++)
+				{
+					auto object = client.second.get_pool().get_object_by_index(i);
+					if (object->get_object_type() == isobus::task_controller_object::ObjectTypes::DeviceProcessData)
+					{
+						auto processDataObject = std::dynamic_pointer_cast<isobus::task_controller_object::DeviceProcessDataObject>(object);
+						if (processDataObject->get_ddi() == static_cast<std::uint16_t>(isobus::DataDescriptionIndex::ActualWorkState) ||
+						    (processDataObject->get_ddi() >= static_cast<std::uint16_t>(isobus::DataDescriptionIndex::ActualCondensedWorkState1_16) &&
+						     processDataObject->get_ddi() <= static_cast<std::uint16_t>(isobus::DataDescriptionIndex::ActualCondensedWorkState241_256)))
+						{
+							// Loop over all objects to find the elements that are the parents of the actual condensed work state objects
+							for (std::uint32_t j = 0; j < client.second.get_pool().size(); j++)
+							{
+								auto parentObject = client.second.get_pool().get_object_by_index(j);
+								if (parentObject->get_object_type() == isobus::task_controller_object::ObjectTypes::DeviceElement)
+								{
+									auto elementObject = std::dynamic_pointer_cast<isobus::task_controller_object::DeviceElementObject>(parentObject);
+									for (std::uint16_t elementObjectChild : elementObject->get_child_object_ids())
+									{
+										if (elementObjectChild == processDataObject->get_object_id())
+										{
+											// TODO: This is a bit of a hack, but it works for now
+											client.second.set_element_number_for_ddi(static_cast<isobus::DataDescriptionIndex>(processDataObject->get_ddi()), elementObject->get_element_number());
+
+											if (processDataObject->has_trigger_method(isobus::task_controller_object::DeviceProcessDataObject::AvailableTriggerMethods::OnChange))
+											{
+												std::cout << "Requesting on-change trigger for element number " << int(elementObject->get_element_number()) << " and DDI " << int(processDataObject->get_ddi()) << std::endl;
+												send_change_threshold_measurement_command(client.first, processDataObject->get_ddi(), elementObject->get_element_number(), 1);
+											}
+											if (processDataObject->has_trigger_method(isobus::task_controller_object::DeviceProcessDataObject::AvailableTriggerMethods::TimeInterval))
+											{
+												std::cout << "Requesting time interval trigger for element number " << int(elementObject->get_element_number()) << " and DDI " << int(processDataObject->get_ddi()) << std::endl;
+												send_time_interval_measurement_command(client.first, processDataObject->get_ddi(), elementObject->get_element_number(), 1000);
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+
+				// Find all section control state DDIs and request them to trigger "On Change"
+				for (std::uint32_t i = 0; i < client.second.get_pool().size(); i++)
+				{
+					auto object = client.second.get_pool().get_object_by_index(i);
+					if (object->get_object_type() == isobus::task_controller_object::ObjectTypes::DeviceProcessData)
+					{
+						auto processDataObject = std::dynamic_pointer_cast<isobus::task_controller_object::DeviceProcessDataObject>(object);
+						if (processDataObject->get_ddi() == static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SectionControlState) ||
+						    processDataObject->get_ddi() == static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SetpointWorkState) ||
+						    (processDataObject->get_ddi() >= static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SetpointCondensedWorkState1_16) &&
+						     processDataObject->get_ddi() <= static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SetpointCondensedWorkState241_256)))
+						{
+							// Loop over all objects to find the elements that are the parents of the section control state objects
+							for (std::uint32_t j = 0; j < client.second.get_pool().size(); j++)
+							{
+								auto parentObject = client.second.get_pool().get_object_by_index(j);
+								if (parentObject->get_object_type() == isobus::task_controller_object::ObjectTypes::DeviceElement)
+								{
+									auto elementObject = std::dynamic_pointer_cast<isobus::task_controller_object::DeviceElementObject>(parentObject);
+									for (std::uint16_t elementObjectChild : elementObject->get_child_object_ids())
+									{
+										if (elementObjectChild == processDataObject->get_object_id())
+										{
+											// TODO: This is a bit of a hack, but it works for now
+											client.second.set_element_number_for_ddi(static_cast<isobus::DataDescriptionIndex>(processDataObject->get_ddi()), elementObject->get_element_number());
+
+											if (processDataObject->has_trigger_method(isobus::task_controller_object::DeviceProcessDataObject::AvailableTriggerMethods::OnChange))
+											{
+												std::cout << "Requesting on-change trigger for element number " << int(elementObject->get_element_number()) << " and DDI " << int(processDataObject->get_ddi()) << std::endl;
+												send_change_threshold_measurement_command(client.first, processDataObject->get_ddi(), elementObject->get_element_number(), 1);
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+
+				std::cout << "Measurement commands sent." << std::endl;
+				client.second.mark_measurement_commands_sent();
+			}
+		}
 	}
 
 	void update_section_states(std::vector<bool> &sectionStates)
@@ -539,13 +683,15 @@ private:
 		}
 		std::cout << std::endl;
 
-		send_set_value_and_acknowledge(client, static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SetpointCondensedWorkState1_16) + ddiOffset, 2, value);
+		std::uint16_t ddiTarget = static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SetpointCondensedWorkState1_16) + ddiOffset;
+		std::uint16_t elementNumber = clients[client].get_element_number_for_ddi(static_cast<isobus::DataDescriptionIndex>(ddiTarget));
+		send_set_value_and_acknowledge(client, ddiTarget, elementNumber, value);
 
 		bool setpointWorkState = clients[client].is_any_section_setpoint_on();
 		if ((clients[client].get_setpoint_work_state() != setpointWorkState))
 		{
 			std::cout << "Sending setpoint work state: " << (setpointWorkState ? "on" : "off") << std::endl;
-			send_set_value_and_acknowledge(client, static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SetpointWorkState), 2, setpointWorkState ? 1 : 0);
+			send_set_value_and_acknowledge(client, static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SetpointWorkState), clients[client].get_element_number_for_ddi(isobus::DataDescriptionIndex::SetpointWorkState), setpointWorkState ? 1 : 0);
 			clients[client].set_setpoint_work_state(setpointWorkState);
 		}
 	}
@@ -553,11 +699,11 @@ private:
 	void send_section_control_state(std::shared_ptr<isobus::ControlFunction> client, bool enabled)
 	{
 		std::cout << "Sending section control state: " << (enabled ? "enabled" : "disabled") << std::endl;
-		send_set_value_and_acknowledge(client, static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SectionControlState), 2, enabled ? 1 : 0);
+		send_set_value_and_acknowledge(client, static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SectionControlState), clients[client].get_element_number_for_ddi(isobus::DataDescriptionIndex::SectionControlState), enabled ? 1 : 0);
 	}
 
 	std::map<std::shared_ptr<isobus::ControlFunction>, ClientState> clients;
-	std::vector<std::shared_ptr<isobus::ControlFunction>> activeClients;
+	std::map<std::shared_ptr<isobus::ControlFunction>, std::queue<std::vector<std::uint8_t>>> uploadedPools;
 };
 
 int main()
@@ -726,6 +872,7 @@ std:
 			isobus::CANStackLogger::error("UDP receive error: " + ec.message());
 		}
 
+		server.request_measurement_commands();
 		server.update_section_control_enabled(autoMode);
 		server.update();
 		speedMessagesInterface.update();

@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 project("AOGTaskController")
 
 set(BUILD_EXAMPLES OFF)
-SET(BUILD_TESTING OFF)
+set(BUILD_TESTING OFF)
 
 if(WIN32)
   set(CAN_DRIVER "WindowsPCANBasic")
@@ -31,7 +31,7 @@ FetchContent_MakeAvailable(Boost)
 FetchContent_Declare(
   isobus
   GIT_REPOSITORY https://github.com/Open-Agriculture/AgIsoStack-plus-plus.git
-  GIT_TAG 215079c5e896dfed49099a3347560321d1becca1
+  GIT_TAG 58686f401282d34b8f15a704a82798222083ca3f
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 FetchContent_MakeAvailable(isobus)
 
