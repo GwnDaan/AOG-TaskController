@@ -228,7 +228,7 @@ public:
 	                       16, // 16 channels for position based control
 	                       isobus::TaskControllerOptions()
 	                         .with_implement_section_control(), // We support section control
-	                       TaskControllerVersion::FirstPublishedEdition)
+	                       TaskControllerVersion::SecondEditionDraft)
 	{
 	}
 
@@ -243,7 +243,7 @@ public:
 		// Initialize a new client state
 		auto state = ClientState();
 		// state.get_pool().set_task_controller_compatibility_level(get_active_client(partnerCF)->reportedVersion);
-		state.get_pool().set_task_controller_compatibility_level(static_cast<std::uint8_t>(TaskControllerVersion::FirstPublishedEdition));
+		state.get_pool().set_task_controller_compatibility_level(static_cast<std::uint8_t>(TaskControllerVersion::SecondEditionDraft));
 
 		bool deserialized = false;
 		while (!uploadedPools[partnerCF].empty())
