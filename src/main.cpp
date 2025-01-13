@@ -357,9 +357,10 @@ public:
 		clients.erase(partner);
 	}
 
-	void on_process_data_acknowledge(std::shared_ptr<isobus::ControlFunction>, std::uint16_t, std::uint16_t, std::uint8_t, ProcessDataCommands) override
+	void on_process_data_acknowledge(std::shared_ptr<isobus::ControlFunction> partner, std::uint16_t dataDescriptionIndex, std::uint16_t elementNumber, std::uint8_t errorCodesFromClient, ProcessDataCommands processDataCommand) override
 	{
 		// This callback lets you know when a client sends a process data acknowledge (PDACK) message to you
+		std::cout << "Received process data acknowledge from client " << int(partner->get_address()) << " for DDI " << dataDescriptionIndex << " element " << elementNumber << " with error codes " << std::bitset<8>(errorCodesFromClient) << " and command " << static_cast<int>(processDataCommand) << std::endl;
 	}
 
 	bool on_value_command(std::shared_ptr<isobus::ControlFunction> partner,
@@ -679,13 +680,13 @@ private:
 
 		std::uint16_t ddiTarget = static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SetpointCondensedWorkState1_16) + ddiOffset;
 		std::uint16_t elementNumber = clients[client].get_element_number_for_ddi(static_cast<isobus::DataDescriptionIndex>(ddiTarget));
-		send_set_value_and_acknowledge(client, ddiTarget, elementNumber, value);
+		send_set_value(client, ddiTarget, elementNumber, value);
 
 		bool setpointWorkState = clients[client].is_any_section_setpoint_on();
 		if ((clients[client].get_setpoint_work_state() != setpointWorkState))
 		{
 			std::cout << "Sending setpoint work state: " << (setpointWorkState ? "on" : "off") << std::endl;
-			send_set_value_and_acknowledge(client, static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SetpointWorkState), clients[client].get_element_number_for_ddi(isobus::DataDescriptionIndex::SetpointWorkState), setpointWorkState ? 1 : 0);
+			send_set_value(client, static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SetpointWorkState), clients[client].get_element_number_for_ddi(isobus::DataDescriptionIndex::SetpointWorkState), setpointWorkState ? 1 : 0);
 			clients[client].set_setpoint_work_state(setpointWorkState);
 		}
 	}
@@ -693,7 +694,7 @@ private:
 	void send_section_control_state(std::shared_ptr<isobus::ControlFunction> client, bool enabled)
 	{
 		std::cout << "Sending section control state: " << (enabled ? "enabled" : "disabled") << std::endl;
-		send_set_value_and_acknowledge(client, static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SectionControlState), clients[client].get_element_number_for_ddi(isobus::DataDescriptionIndex::SectionControlState), enabled ? 1 : 0);
+		send_set_value(client, static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SectionControlState), clients[client].get_element_number_for_ddi(isobus::DataDescriptionIndex::SectionControlState), enabled ? 1 : 0);
 	}
 
 	std::map<std::shared_ptr<isobus::ControlFunction>, ClientState> clients;
