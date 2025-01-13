@@ -23,9 +23,8 @@ set(BOOST_ENABLE_CMAKE ON)
 FetchContent_Declare(
   Boost
   URL https://github.com/boostorg/boost/releases/download/boost-1.86.0/boost-1.86.0-cmake.7z
-  USES_TERMINAL_DOWNLOAD TRUE
   DOWNLOAD_NO_EXTRACT FALSE
-  DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  USES_TERMINAL_DOWNLOAD TRUE DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 FetchContent_MakeAvailable(Boost)
 
 FetchContent_Declare(

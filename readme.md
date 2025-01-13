@@ -1,5 +1,7 @@
 # AOG-TaskController 🚜
 
+This is an experimental project to control sections of an ISOBUS implement using AgOpenGPS. It is based on the [AgIsoStack++](https://github.com/Open-Agriculture/AgIsoStack-plus-plus) library.
+
 ## How to build?
 
 ### Windows
