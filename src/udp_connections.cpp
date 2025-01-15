@@ -132,7 +132,7 @@ void UdpConnections::handle_incoming_packets()
 
 				if (packetCallback)
 				{
-					packetCallback(src, pgn, { rxBuffer.data() + index, static_cast<size_t>(len - 1) });
+					packetCallback(src, pgn, { rxBuffer.data() + index, len });
 				}
 				index += len + 1;
 			}
@@ -257,7 +257,7 @@ bool UdpConnections::send(std::uint8_t src, std::uint8_t pgn, std::span<std::uin
 	txBuffer[index++] = PACKET_START & 0xFF;
 	txBuffer[index++] = src;
 	txBuffer[index++] = pgn;
-	txBuffer[index++] = data.size() + 1;
+	txBuffer[index++] = data.size();
 	std::copy(data.begin(), data.end(), txBuffer.begin() + index);
 	index += data.size();
 

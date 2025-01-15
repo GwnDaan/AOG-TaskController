@@ -29,6 +29,7 @@
 #include "isobus/isobus/isobus_speed_distance_messages.hpp"
 #include "isobus/isobus/isobus_standard_data_description_indices.hpp"
 #include "isobus/isobus/isobus_task_controller_server.hpp"
+#include "isobus/utility/system_timing.hpp"
 
 #include <bitset>
 #include <map>
@@ -398,25 +399,6 @@ public:
 					std::cout << static_cast<int>(clients[partner].get_section_actual_state(sectionIndexOffset + i)) << " ";
 				}
 				std::cout << std::endl;
-
-				std::vector<uint8_t> data = { clients[partner].get_number_of_sections() };
-
-				std::uint8_t sectionIndex = 0;
-
-				while (sectionIndex < clients[partner].get_number_of_sections())
-				{
-					if (clients[partner].get_section_actual_state(sectionIndex) == SectionState::ON)
-					{
-						data.push_back(1);
-					}
-					else
-					{
-						data.push_back(0);
-					}
-					sectionIndex++;
-				}
-
-				udpConnections->send(0x70, 0x80, data);
 			}
 			break;
 
@@ -702,17 +684,7 @@ int main()
 	std::cout << "Task controller server started." << std::endl;
 
 	auto packetHandler = [&server, &speedMessagesInterface](std::uint8_t src, std::uint8_t pgn, std::span<std::uint8_t> data) {
-		if (src == 0x70 && pgn == 0x00)
-		{
-			// We only care about the sections (index + 6)
-			std::vector<bool> sectionStates;
-			for (std::uint8_t byte : data)
-			{
-				sectionStates.push_back(byte == 1); // no offset now, new PGN
-			}
-			server.update_section_states(sectionStates);
-		}
-		else if (src == 0x7F && pgn == 0xFE) // 254 - Steer Data
+		if (src == 0x7F && pgn == 0xFE) // 254 - Steer Data
 		{
 			std::uint16_t speed = data[0] | (data[1] << 8);
 			std::uint8_t status = data[2];
@@ -724,12 +696,27 @@ int main()
 			speedMessagesInterface.machineSelectedSpeedTransmitData.set_machine_direction_of_travel(isobus::SpeedMessagesInterface::MachineDirection::Forward); // TODO: Implement direction
 			speedMessagesInterface.machineSelectedSpeedTransmitData.set_machine_speed(speed);
 			speedMessagesInterface.machineSelectedSpeedTransmitData.set_machine_distance(0); // TODO: Implement distance
+
+			// TODO: hack to get desired section states. probably want to make a new pgn later when we need more than 16 sections
+			std::vector<bool> sectionStates;
+			for (std::uint8_t i = 0; i < 8; i++)
+			{
+				sectionStates.push_back(data[6] & (1 << i));
+			}
+			for (std::uint8_t i = 0; i < 8; i++)
+			{
+				sectionStates.push_back(data[7] & (1 << i));
+			}
+
+			server.update_section_states(sectionStates);
 		}
 	};
 	udpConnections->set_packet_handler(packetHandler);
 	udpConnections->open();
 
 	std::cout << "UDP connections opened." << std::endl;
+
+	std::uint32_t lastHeartbeatTransmit = 0;
 
 	while (running)
 	{
@@ -749,6 +736,32 @@ int main()
 		}
 		server.update();
 		speedMessagesInterface.update();
+
+		if (isobus::SystemTiming::time_expired_ms(lastHeartbeatTransmit, 100))
+		{
+			for (auto &client : server.get_clients())
+			{
+				auto &state = client.second;
+				std::vector<uint8_t> data = { state.is_section_control_enabled(), state.get_number_of_sections() };
+
+				std::uint8_t sectionIndex = 0;
+				while (sectionIndex < state.get_number_of_sections())
+				{
+					std::uint8_t byte = 0;
+					for (std::uint8_t i = 0; i < 8; i++)
+					{
+						if (sectionIndex < state.get_number_of_sections())
+						{
+							byte |= (state.get_section_actual_state(sectionIndex) == SectionState::ON) << i;
+							sectionIndex++;
+						}
+					}
+					data.push_back(byte);
+				}
+				udpConnections->send(0x7F, 0xF0, data);
+			}
+			lastHeartbeatTransmit = isobus::SystemTiming::get_timestamp_ms();
+		}
 
 		// Update again in a little bit
 		std::this_thread::sleep_for(std::chrono::milliseconds(5));
