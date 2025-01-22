@@ -2,23 +2,31 @@
 
 This is an experimental project to control sections of an ISOBUS implement using AgOpenGPS. It is based on the [AgIsoStack++](https://github.com/Open-Agriculture/AgIsoStack-plus-plus) library.
 
-## How to build
+## How to run the project
 
-### Windows
+After installing the desired release of AOG-TaskController, you can run it directly through AgOpenGPS itself:
 
-You'll need cmake:
+1. Open AgIO.
+2. Go to the `Settings` tab.
+3. Click on the `ISOBUS` tab.
+4. Select the CAN adapter and channel you want to use.
+5. Click on the `connect` button.
+
+![how-to](resources/agopengps-howto.png)
+
+## How to package the project
+
+To package the project, you need to have the following tools installed:
+
+- [CMake](https://cmake.org/download/)
+- [C++ build tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+
+Then, you can run the following commands:
 
 ```bash
-cmake -S. -B build -Wno-dev
-cmake --build build
+mkdir build
+cmake -S . -B build -DBUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF -Wno-dev
+cmake --build build --config Release --target package
 ```
 
-If the NTCAN SDK is not found:
-Download <https://esd.eu/en/products/can-sdk> and during install select all dependencies:
-(restart cmd.exe before running build)
-
-## How to run?
-
-```bash
-build\Debug\AOGTaskController.exe
-```
+The installer will be generated in the `build` directory.
