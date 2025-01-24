@@ -105,7 +105,7 @@ bool Application::initialize()
 
 			std::array<std::uint8_t, 8> xteData = {
 				xteSid, // Sequence ID
-				xteMode | 0b00110000 | (status == 1 ? 0b00000000 : 0b01000000), // XTE mode (4 bits) + Reserved (2 bits set to 1) + Navigation Terminated (2 bits)
+				static_cast<std::uint8_t>(xteMode | 0b00110000 | (status == 1 ? 0b00000000 : 0b01000000)), // XTE mode (4 bits) + Reserved (2 bits set to 1) + Navigation Terminated (2 bits)
 				static_cast<std::uint8_t>(xte & 0xFF), // XTE LSB
 				static_cast<std::uint8_t>((xte >> 8) & 0xFF), // XTE
 				static_cast<std::uint8_t>((xte >> 16) & 0xFF), // XTE

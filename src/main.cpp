@@ -62,6 +62,10 @@ enum class CANAdapter
 {
 	NONE,
 	ADAPTER_PCAN_USB,
+	ADAPTER_INNOMAKER_USB2CAN,
+	ADAPTER_RUSOKU_TOUCAN,
+	ADAPTER_SYS_TEC_USB2CAN,
+	ADAPTER_NTCAN,
 };
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd)
@@ -75,6 +79,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		std::cout << arg.c_str() << " ";
 	}
 	std::cout << std::endl;
+
+	// Print version
+	std::cout << "AOG-TaskController v" << PROJECT_VERSION << std::endl;
 
 	auto canAdapter = CANAdapter::NONE;
 	std::string canChannel;
@@ -95,14 +102,35 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			std::cout << "Usage: AOG-TaskController.exe [options]\n";
 			std::cout << "Options:\n";
 			std::cout << "  --help\t\tShow this help message\n";
+			std::cout << "  --version\t\tShow the version of the application\n";
 			std::cout << "  --adapter=<driver>\tSelect the CAN driver\n";
 			return 0;
 		}
+		else if (_stricmp("--version", key.c_str()) == 0)
+		{
+			std::cout << PROJECT_VERSION << std::endl;
+		}
 		else if (_stricmp("--can_adapter", key.c_str()) == 0)
 		{
-			if (_stricmp("pcan-usb", value.c_str()) == 0)
+			if (_stricmp("PEAK-PCAN", value.c_str()) == 0)
 			{
 				canAdapter = CANAdapter::ADAPTER_PCAN_USB;
+			}
+			else if (_stricmp("InnoMaker-USB2CAN", value.c_str()) == 0)
+			{
+				canAdapter = CANAdapter::ADAPTER_INNOMAKER_USB2CAN;
+			}
+			else if (_stricmp("Rusoku-TouCAN", value.c_str()) == 0)
+			{
+				canAdapter = CANAdapter::ADAPTER_RUSOKU_TOUCAN;
+			}
+			else if (_stricmp("SYS-TEC-USB2CAN", value.c_str()) == 0)
+			{
+				canAdapter = CANAdapter::ADAPTER_SYS_TEC_USB2CAN;
+			}
+			else if (_stricmp("NTCAN", value.c_str()) == 0)
+			{
+				canAdapter = CANAdapter::ADAPTER_NTCAN;
 			}
 			else
 			{
@@ -123,9 +151,29 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			canDriver = std::make_shared<isobus::PCANBasicWindowsPlugin>(PCAN_USBBUS1 - 1 + std::stoi(canChannel));
 			break;
 		}
+		case CANAdapter::ADAPTER_INNOMAKER_USB2CAN:
+		{
+			canDriver = std::make_shared<isobus::InnoMakerUSB2CANWindowsPlugin>(std::stoi(canChannel) - 1);
+			break;
+		}
+		case CANAdapter::ADAPTER_RUSOKU_TOUCAN:
+		{
+			canDriver = std::make_shared<isobus::TouCANPlugin>(std::stoi(canChannel), std::stoi(canChannel));
+			break;
+		}
+		case CANAdapter::ADAPTER_SYS_TEC_USB2CAN:
+		{
+			canDriver = std::make_shared<isobus::SysTecWindowsPlugin>(static_cast<std::uint8_t>(std::stoi(canChannel)));
+			break;
+		}
+		case CANAdapter::ADAPTER_NTCAN:
+		{
+			canDriver = std::make_shared<isobus::NTCANPlugin>(std::stoi(canChannel));
+			break;
+		}
 		default:
 		{
-			std::cout << "No CAN adapter selected, exiting" << std::endl;
+			std::cout << "No CAN adapter selected, exiting..." << std::endl;
 			return -1;
 		}
 	}
@@ -146,7 +194,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	Application app(canDriver);
 	if (!app.initialize())
 	{
-		std::cout << "Failed to initialize application" << std::endl;
+		std::cout << "Failed to initialize application..." << std::endl;
 		return -1;
 	}
 
@@ -161,7 +209,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
 		if (!app.update())
 		{
-			std::cout << "Something unexpected happened, stopping application" << std::endl;
+			std::cout << "Something unexpected happened, stopping application..." << std::endl;
 			break;
 		}
 	}
