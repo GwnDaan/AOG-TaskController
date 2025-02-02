@@ -73,8 +73,11 @@ bool Application::initialize()
 	tcServer->initialize();
 
 	// Initialize speed and distance messages
-	speedMessagesInterface = std::make_shared<isobus::SpeedMessagesInterface>(serverCF, false, false, true, false);
+	speedMessagesInterface = std::make_unique<isobus::SpeedMessagesInterface>(serverCF, false, false, true, false);
 	speedMessagesInterface->initialize();
+	nmea2000MessageInterface = std::make_unique<isobus::NMEA2000MessageInterface>(serverCF, false, false, false, false, false, false, false);
+	nmea2000MessageInterface->initialize();
+	nmea2000MessageInterface->set_enable_sending_cog_sog_cyclically(true);
 
 	std::cout << "Task controller server started." << std::endl;
 
@@ -94,6 +97,11 @@ bool Application::initialize()
 			speedMessagesInterface->machineSelectedSpeedTransmitData.set_machine_direction_of_travel(isobus::SpeedMessagesInterface::MachineDirection::Forward); // TODO: Implement direction
 			speedMessagesInterface->machineSelectedSpeedTransmitData.set_machine_speed(speed);
 			speedMessagesInterface->machineSelectedSpeedTransmitData.set_machine_distance(0); // TODO: Implement distance
+			auto &cog_sog_message = nmea2000MessageInterface->get_cog_sog_transmit_message();
+			cog_sog_message.set_sequence_id(nmea2000SequenceIdentifier++);
+			cog_sog_message.set_speed_over_ground(speed);
+			cog_sog_message.set_course_over_ground(0); // TODO: Implement course
+			cog_sog_message.set_course_over_ground_reference(isobus::NMEA2000Messages::CourseOverGroundSpeedOverGroundRapidUpdate::CourseOverGroundReference::NotApplicableOrNull);
 
 			std::int32_t xte = (data[5] - 127) * 2;
 			static const std::uint8_t xteMode = 0b00000001;
@@ -155,6 +163,7 @@ bool Application::update()
 	tcServer->request_measurement_commands();
 	tcServer->update();
 	speedMessagesInterface->update();
+	nmea2000MessageInterface->update();
 
 	if (isobus::SystemTiming::time_expired_ms(lastHeartbeatTransmit, 100))
 	{
