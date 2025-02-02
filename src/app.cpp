@@ -14,7 +14,6 @@
 #include "isobus/isobus/isobus_preferred_addresses.hpp"
 #include "isobus/utility/system_timing.hpp"
 
-#include "console_logger.cpp"
 #include "task_controller.hpp"
 
 using boost::asio::ip::udp;
@@ -32,10 +31,7 @@ bool Application::initialize()
 		std::cout << "Unable to find a CAN driver. Please make sure the selected driver is installed." << std::endl;
 		return false;
 	}
-	isobus::CANStackLogger::set_can_stack_logger_sink(&logger);
-	isobus::CANStackLogger::set_log_level(isobus::CANStackLogger::LoggingLevel::Debug); // Change this to Debug to see more information
 	isobus::CANHardwareInterface::set_number_of_can_channels(1);
-	// isobus::CANHardwareInterface::set_periodic_update_interval(10);
 	isobus::CANHardwareInterface::assign_can_channel_frame_handler(0, canDriver);
 
 	if ((!isobus::CANHardwareInterface::start()) || (!canDriver->get_is_valid()))

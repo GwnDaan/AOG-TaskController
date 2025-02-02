@@ -17,7 +17,7 @@ using json = nlohmann::json;
 
 bool Settings::load()
 {
-	std::ifstream file(get_filename());
+	std::ifstream file(get_filename_path("settings.json"));
 	if (!file.is_open())
 	{
 		return false;
@@ -35,7 +35,7 @@ bool Settings::load()
 		}
 		catch (const nlohmann::json::exception &e)
 		{
-			std::cerr << "Error parsing 'subnet': " << e.what() << std::endl;
+			std::cout << "Error parsing 'subnet': " << e.what() << std::endl;
 			configuredSubnet = DEFAULT_SUBNET; // Fallback to default
 		}
 	}
@@ -52,7 +52,7 @@ bool Settings::save() const
 	json data;
 	data["subnet"] = configuredSubnet;
 
-	std::ofstream file(get_filename());
+	std::ofstream file(get_filename_path("settings.json"));
 	if (!file.is_open())
 	{
 		return false;
@@ -82,21 +82,45 @@ bool Settings::set_subnet(std::array<std::uint8_t, 3> subnet, bool save)
 	return true;
 }
 
-std::string Settings::get_filename()
+std::string Settings::get_filename_path(std::string fileName)
 {
-	const std::string appName = "AOG-TaskController";
-	const std::string settingsFile = "settings.json";
-
 	char path[MAX_PATH];
-	if (SHGetFolderPath(NULL, CSIDL_APPDATA, NULL, 0, path) == S_OK)
-	{
-		std::string configDir = std::string(path) + "\\" + appName;
-		CreateDirectory(configDir.c_str(), NULL);
-
-		return configDir + "\\" + settingsFile;
-	}
-	else
+	if (SHGetFolderPath(NULL, CSIDL_APPDATA, NULL, 0, path) != S_OK)
 	{
 		throw std::runtime_error("Failed to get AppData path");
 	}
+
+	std::string baseDir = std::string(path) + "\\" + PROJECT_NAME;
+	std::string fullPath = baseDir + "\\" + fileName;
+
+	// Find the last directory separator (before the actual file name)
+	size_t lastSlash = fullPath.find_last_of("\\/");
+	if (lastSlash != std::string::npos)
+	{
+		std::string directoryPath = fullPath.substr(0, lastSlash); // Extract the directory part
+
+		// Create each directory level iteratively
+		std::istringstream dirStream(directoryPath);
+		std::string segment;
+		std::string currentPath;
+
+		while (std::getline(dirStream, segment, '\\')) // Split by `\`
+		{
+			if (!currentPath.empty())
+				currentPath += "\\"; // Append separator only after first segment
+
+			currentPath += segment;
+
+			if (CreateDirectory(currentPath.c_str(), NULL) == 0)
+			{
+				DWORD error = GetLastError();
+				if (error != ERROR_ALREADY_EXISTS)
+				{
+					throw std::runtime_error("Failed to create directory: " + currentPath);
+				}
+			}
+		}
+	}
+
+	return fullPath;
 }

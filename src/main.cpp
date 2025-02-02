@@ -1,10 +1,14 @@
 #include "app.hpp"
+#include "logging.cpp"
+#include "settings.hpp"
 
 #include "isobus/hardware_integration/available_can_drivers.hpp"
+#include "isobus/isobus/can_stack_logger.hpp"
 
 #include <windows.h>
 
 #include <shellapi.h>
+#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -44,13 +48,13 @@ std::vector<std::string> ParseCommandLine(LPSTR lpCmdLine)
 			continue;
 		}
 
-		std::string arg(requiredSize, 0);
+		// Allocate a string with length excluding the null terminator.
+		std::string arg(requiredSize - 1, '\0');
 		int result = WideCharToMultiByte(CP_UTF8, 0, argv[i], -1, arg.data(), requiredSize, NULL, NULL);
 		if (result == 0)
 		{
 			continue;
 		}
-
 		arguments.push_back(arg);
 	}
 
@@ -65,110 +69,193 @@ enum class CANAdapter
 	ADAPTER_INNOMAKER_USB2CAN,
 	ADAPTER_RUSOKU_TOUCAN,
 	ADAPTER_SYS_TEC_USB2CAN,
-	ADAPTER_NTCAN,
 };
 
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd)
+class ArgumentProcessor
 {
-	std::shared_ptr<isobus::CANHardwarePlugin> canDriver;
-	auto arguments = ParseCommandLine(lpCmdLine);
-
-	// Print command line string to console
-	for (std::string arg : arguments)
+public:
+	ArgumentProcessor(std::vector<std::string> arguments) :
+	  arguments(arguments)
 	{
-		std::cout << arg.c_str() << " ";
 	}
-	std::cout << std::endl;
 
-	// Print version
-	std::cout << "AOG-TaskController v" << PROJECT_VERSION << std::endl;
-
-	auto canAdapter = CANAdapter::NONE;
-	std::string canChannel;
-
-	// Parse command line options
-	for (std::string arg : arguments)
+	bool process()
 	{
-		size_t pos = arg.find('=');
-		if (pos == std::string::npos)
+		for (std::string arg : arguments)
 		{
-			continue;
+			std::transform(arg.begin(), arg.end(), arg.begin(), [](unsigned char c) { return std::tolower(c); });
+			parse_option(arg);
+			parse_parameter(arg);
 		}
-		std::string key = arg.substr(0, pos);
-		std::string value = arg.substr(pos + 1);
+		return true;
+	}
 
-		if (_stricmp("--help", key.c_str()) == 0)
+	CANAdapter get_can_adapter() const
+	{
+		return canAdapter;
+	}
+
+	std::string get_can_channel() const
+	{
+		return canChannel;
+	}
+
+	bool is_file_logging() const
+	{
+		return fileLogging;
+	}
+
+private:
+	bool parse_option(std::string option)
+	{
+		if ("--help" == option)
 		{
 			std::cout << "Usage: AOG-TaskController.exe [options]\n";
 			std::cout << "Options:\n";
 			std::cout << "  --help\t\tShow this help message\n";
 			std::cout << "  --version\t\tShow the version of the application\n";
 			std::cout << "  --adapter=<driver>\tSelect the CAN driver\n";
-			return 0;
 		}
-		else if (_stricmp("--version", key.c_str()) == 0)
+		else if ("--version" == option)
 		{
 			std::cout << PROJECT_VERSION << std::endl;
 		}
-		else if (_stricmp("--can_adapter", key.c_str()) == 0)
+		else if ("--log2file" == option)
 		{
-			if (_stricmp("PEAK-PCAN", value.c_str()) == 0)
-			{
-				canAdapter = CANAdapter::ADAPTER_PCAN_USB;
-			}
-			else if (_stricmp("InnoMaker-USB2CAN", value.c_str()) == 0)
-			{
-				canAdapter = CANAdapter::ADAPTER_INNOMAKER_USB2CAN;
-			}
-			else if (_stricmp("Rusoku-TouCAN", value.c_str()) == 0)
-			{
-				canAdapter = CANAdapter::ADAPTER_RUSOKU_TOUCAN;
-			}
-			else if (_stricmp("SYS-TEC-USB2CAN", value.c_str()) == 0)
-			{
-				canAdapter = CANAdapter::ADAPTER_SYS_TEC_USB2CAN;
-			}
-			else if (_stricmp("NTCAN", value.c_str()) == 0)
-			{
-				canAdapter = CANAdapter::ADAPTER_NTCAN;
-			}
-			else
-			{
-				std::cout << "Unknown CAN adapter: " << value.c_str() << std::endl;
-				return -1;
-			}
+			fileLogging = true;
 		}
-		else if (_strcmpi("--can_channel", key.c_str()) == 0)
+		else
+		{
+			return false;
+		}
+		return true;
+	}
+
+	bool parse_parameter(std::string parameter)
+	{
+		size_t pos = parameter.find('=');
+		if (pos == std::string::npos)
+		{
+			return false;
+		}
+		std::string key = parameter.substr(0, pos);
+		std::string value = parameter.substr(pos + 1);
+
+		if ("--can_adapter" == key)
+		{
+			static const std::unordered_map<std::string, CANAdapter> adapterMap = {
+				{ "peak-pcan", CANAdapter::ADAPTER_PCAN_USB },
+				{ "innomaker-usb2can", CANAdapter::ADAPTER_INNOMAKER_USB2CAN },
+				{ "rusoku-toucan", CANAdapter::ADAPTER_RUSOKU_TOUCAN },
+				{ "sys-tec-usb2can", CANAdapter::ADAPTER_SYS_TEC_USB2CAN },
+			};
+
+			auto it = adapterMap.find(value);
+			if (it != adapterMap.end())
+			{
+				canAdapter = it->second;
+				return true;
+			}
+
+			std::cout << "Unknown CAN adapter: " << value.c_str() << std::endl;
+			return false;
+		}
+		else if ("--can_channel" == key)
 		{
 			canChannel = value;
 		}
+		else if ("--log_level" == key)
+		{
+			if ("debug" == value)
+			{
+				isobus::CANStackLogger::set_log_level(isobus::CANStackLogger::LoggingLevel::Debug);
+			}
+			else if ("info" == value)
+			{
+				isobus::CANStackLogger::set_log_level(isobus::CANStackLogger::LoggingLevel::Info);
+			}
+			else if ("warning" == value)
+			{
+				isobus::CANStackLogger::set_log_level(isobus::CANStackLogger::LoggingLevel::Warning);
+			}
+			else if ("error" == value)
+			{
+				isobus::CANStackLogger::set_log_level(isobus::CANStackLogger::LoggingLevel::Error);
+			}
+			else if ("critical" == value)
+			{
+				isobus::CANStackLogger::set_log_level(isobus::CANStackLogger::LoggingLevel::Critical);
+			}
+			else
+			{
+				std::cout << "Unknown log level: " << value.c_str() << std::endl;
+				return false;
+			}
+		}
+		else
+		{
+			return false;
+		}
+		return true;
 	}
 
-	switch (canAdapter)
+	std::vector<std::string> arguments;
+	CANAdapter canAdapter = CANAdapter::NONE;
+	std::string canChannel;
+	bool fileLogging = false;
+};
+
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd)
+{
+	std::ofstream logFile;
+	std::shared_ptr<isobus::CANHardwarePlugin> canDriver;
+	auto arguments = ParseCommandLine(lpCmdLine);
+
+	// Print command line string and version to console
+	ArgumentProcessor argumentProcessor(arguments);
+	bool argumentsProcessed = argumentProcessor.process();
+
+	// The sequence is important here, first we process the arguments, then we check if the file logging is enabled, then we log the arguments and version to the console/file.
+	isobus::CANStackLogger::set_can_stack_logger_sink(&logger);
+	if (argumentProcessor.is_file_logging())
+	{
+		setup_file_logging();
+	}
+
+	// Sent the cmd-line arguments and app-version to the console
+	for (std::string arg : arguments)
+	{
+		std::cout << arg.c_str() << " ";
+	}
+	std::cout << std::endl;
+	std::cout << "AOG-TaskController v" << PROJECT_VERSION << std::endl;
+
+	if (!argumentsProcessed)
+	{
+		std::cout << "Failed to process arguments, exiting..." << std::endl;
+		return -1;
+	}
+
+	switch (argumentProcessor.get_can_adapter())
 	{
 		case CANAdapter::ADAPTER_PCAN_USB:
 		{
-			canDriver = std::make_shared<isobus::PCANBasicWindowsPlugin>(PCAN_USBBUS1 - 1 + std::stoi(canChannel));
+			canDriver = std::make_shared<isobus::PCANBasicWindowsPlugin>(PCAN_USBBUS1 - 1 + std::stoi(argumentProcessor.get_can_channel()));
 			break;
 		}
 		case CANAdapter::ADAPTER_INNOMAKER_USB2CAN:
 		{
-			canDriver = std::make_shared<isobus::InnoMakerUSB2CANWindowsPlugin>(std::stoi(canChannel) - 1);
+			canDriver = std::make_shared<isobus::InnoMakerUSB2CANWindowsPlugin>(std::stoi(argumentProcessor.get_can_channel()) - 1);
 			break;
 		}
 		case CANAdapter::ADAPTER_RUSOKU_TOUCAN:
 		{
-			canDriver = std::make_shared<isobus::TouCANPlugin>(std::stoi(canChannel), std::stoi(canChannel));
+			canDriver = std::make_shared<isobus::TouCANPlugin>(std::stoi(argumentProcessor.get_can_channel()), std::stoi(argumentProcessor.get_can_channel()));
 			break;
 		}
 		case CANAdapter::ADAPTER_SYS_TEC_USB2CAN:
 		{
-			canDriver = std::make_shared<isobus::SysTecWindowsPlugin>(static_cast<std::uint8_t>(std::stoi(canChannel)));
-			break;
-		}
-		case CANAdapter::ADAPTER_NTCAN:
-		{
-			canDriver = std::make_shared<isobus::NTCANPlugin>(std::stoi(canChannel));
+			canDriver = std::make_shared<isobus::SysTecWindowsPlugin>(static_cast<std::uint8_t>(std::stoi(argumentProcessor.get_can_channel())));
 			break;
 		}
 		default:
@@ -177,7 +264,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 			return -1;
 		}
 	}
-
 	WNDCLASS wc = { 0 };
 	wc.lpfnWndProc = WndProc;
 	wc.hInstance = hInstance;

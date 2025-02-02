@@ -75,7 +75,7 @@ udp::endpoint UdpConnections::get_local_endpoint() const
 	}
 	catch (const std::exception &e)
 	{
-		std::cerr << "Error: " << e.what() << std::endl;
+		std::cout << "Error: " << e.what() << std::endl;
 	}
 
 	std::cout << "No suitable IP address found that matches the subnet " << settings->get_subnet_string() << ", using loopback address.\n";
@@ -125,7 +125,7 @@ void UdpConnections::handle_incoming_packets()
 				// std::uint8_t crcCalc = calculate_crc({ rxBuffer.data() + index - 3, static_cast<size_t>(len) + 3 });
 				// if (crc != crcCalc)
 				// {
-				//  std::cerr << "CRC mismatch (for PGN " << static_cast<int>(pgn) << "?), expected " << static_cast<int>(crc) << " but got " << static_cast<int>(crcCalc) << std::endl;
+				//  std::cout << "CRC mismatch (for PGN " << static_cast<int>(pgn) << "?), expected " << static_cast<int>(crc) << " but got " << static_cast<int>(crcCalc) << std::endl;
 				// 	rxIndex = 0;
 				// 	break;
 				// }
@@ -157,7 +157,7 @@ void UdpConnections::handle_incoming_packets()
 	}
 	else
 	{
-		std::cerr << "Error while receiving data: " << error_code.message() << std::endl;
+		std::cout << "Error while receiving data: " << error_code.message() << std::endl;
 	}
 }
 
@@ -194,7 +194,7 @@ void UdpConnections::handle_address_detection()
 				// std::uint8_t crcCalc = calculate_crc({ rxBuffer.data() + index - 3, static_cast<size_t>(len) + 3 });
 				// if (crc != crcCalc)
 				// {
-				// 	std::cerr << "CRC mismatch (for PGN " << static_cast<int>(pgn) << "?), expected " << static_cast<int>(crc) << " but got " << static_cast<int>(crcCalc) << std::endl;
+				// 	std::cout << "CRC mismatch (for PGN " << static_cast<int>(pgn) << "?), expected " << static_cast<int>(crc) << " but got " << static_cast<int>(crcCalc) << std::endl;
 				// 	rxIndex = 0;
 				// 	break;
 				// }
@@ -244,7 +244,7 @@ void UdpConnections::handle_address_detection()
 	}
 	else
 	{
-		std::cerr << "Error while receiving data: " << error_code.message() << std::endl;
+		std::cout << "Error while receiving data: " << error_code.message() << std::endl;
 	}
 }
 

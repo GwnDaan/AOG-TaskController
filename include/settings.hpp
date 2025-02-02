@@ -48,13 +48,14 @@ public:
 	 */
 	bool set_subnet(std::array<std::uint8_t, 3> subnet, bool save = true);
 
-private:
 	/**
 	 * @brief Get the absolute path to the settings file
+	 * @param filename The filename to get the path for
 	 * @return The absolute path to the settings file
 	 */
-	static std::string get_filename();
+	static std::string get_filename_path(std::string);
 
+private:
 	constexpr static std::array<std::uint8_t, 3> DEFAULT_SUBNET = { 192, 168, 5 };
 	std::array<std::uint8_t, 3> configuredSubnet = DEFAULT_SUBNET;
 };

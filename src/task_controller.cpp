@@ -7,11 +7,13 @@
  * @copyright 2025 Daan Steenbergen
  */
 #include "task_controller.hpp"
+#include "settings.hpp"
 
 #include "isobus/isobus/isobus_device_descriptor_object_pool_helpers.hpp"
 #include "isobus/isobus/isobus_task_controller_server.hpp"
 
 #include <bitset>
+#include <fstream>
 #include <iostream>
 
 void ClientState::set_number_of_sections(std::uint8_t number)
@@ -124,7 +126,7 @@ std::uint16_t ClientState::get_element_number_for_ddi(isobus::DataDescriptionInd
 	{
 		return it->second;
 	}
-	std::cerr << "Cached element number not found for DDI " << static_cast<int>(ddi) << std::endl;
+	std::cout << "Cached element number not found for DDI " << static_cast<int>(ddi) << std::endl;
 	return 0;
 }
 
@@ -163,23 +165,42 @@ bool MyTCServer::activate_object_pool(std::shared_ptr<isobus::ControlFunction> p
 		auto binaryPool = uploadedPools[partnerCF].front();
 		uploadedPools[partnerCF].pop();
 		deserialized = state.get_pool().deserialize_binary_object_pool(binaryPool.data(), static_cast<std::uint32_t>(binaryPool.size()), partnerCF->get_NAME());
-
-		// std::ofstream outFile("partial-ddop-" + std::to_string(std::time(nullptr)) + ".bin", std::ios::binary);
-		// outFile.write(reinterpret_cast<const char *>(binaryPool.data()), binaryPool.size());
-		// outFile.close();
 	}
 	if (deserialized)
 	{
-		// std::vector<std::uint8_t> binaryPool;
-		// bool success = state.get_pool().generate_binary_object_pool(binaryPool);
-		// if (success)
-		// {
-		// 	std::ofstream outFile("ddop-" + std::to_string(std::time(nullptr)) + ".bin", std::ios::binary);
-		// 	outFile.write(reinterpret_cast<const char *>(binaryPool.data()), binaryPool.size());
-		// 	outFile.close();
-		// }
-
 		std::cout << "Successfully deserialized device descriptor object pool." << std::endl;
+
+		// Save to NVM
+		std::shared_ptr<isobus::task_controller_object::DeviceObject> deviceObject;
+		for (std::uint16_t i = 0; i < state.get_pool().size(); i++)
+		{
+			auto object = state.get_pool().get_object_by_index(i);
+			if (object->get_object_type() == isobus::task_controller_object::ObjectTypes::Device)
+			{
+				deviceObject = std::static_pointer_cast<isobus::task_controller_object::DeviceObject>(object);
+				break;
+			}
+		}
+		auto fileName = std::to_string(partnerCF->get_NAME().get_full_name()) + "\\" + std::string(deviceObject->get_localization_label().begin(), deviceObject->get_localization_label().end()) + ".iop";
+		std::vector<std::uint8_t> binaryPool;
+		if (state.get_pool().generate_binary_object_pool(binaryPool))
+		{
+			std::ofstream outFile(Settings::get_filename_path(fileName), std::ios::binary);
+			if (outFile.is_open())
+			{
+				outFile.write(reinterpret_cast<const char *>(binaryPool.data()), binaryPool.size());
+				outFile.close();
+			}
+			else
+			{
+				std::cout << "Unable to save DDOP to NVM. (Failed to open file)" << std::endl;
+			}
+		}
+		else
+		{
+			std::cout << "Unable to save DDOP to NVM. (Failed to generate binary object pool)" << std::endl;
+		}
+
 		auto implement = isobus::DeviceDescriptorObjectPoolHelper::get_implement_geometry(state.get_pool());
 		std::uint8_t numberOfSections = 0;
 

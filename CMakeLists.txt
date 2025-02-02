@@ -14,7 +14,6 @@ set(CAN_DRIVER "WindowsPCANBasic")
 list(APPEND CAN_DRIVER "WindowsInnoMakerUSB2CAN")
 list(APPEND CAN_DRIVER "TouCAN")
 list(APPEND CAN_DRIVER "SYS_TEC")
-list(APPEND CAN_DRIVER "NTCAN")
 
 include(FetchContent)
 
@@ -52,7 +51,9 @@ set_target_properties(${PROJECT_NAME} PROPERTIES WIN32_EXECUTABLE TRUE)
 target_include_directories(${PROJECT_NAME}
                            PRIVATE ${CMAKE_CURRENT_LIST_DIR}/include)
 
-target_compile_definitions(${PROJECT_NAME} PUBLIC PROJECT_VERSION)
+target_compile_definitions(
+  ${PROJECT_NAME} PUBLIC PROJECT_VERSION="${PROJECT_VERSION}"
+                         PROJECT_NAME="${PROJECT_NAME}")
 
 target_link_libraries(
   ${PROJECT_NAME}
