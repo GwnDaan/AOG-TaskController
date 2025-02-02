@@ -59,7 +59,7 @@ static void setup_file_logging()
 	  std::to_string(localTime.tm_year + 1900) + "-" +
 	  std::to_string(localTime.tm_mon + 1) + "-" +
 	  std::to_string(localTime.tm_mday) + "_" +
-	  std::to_string(localTime.tm_hour) + ":" +
+	  std::to_string(localTime.tm_hour) + "-" +
 	  std::to_string(localTime.tm_min) + ".log";
 
 	teeStream = std::make_unique<TeeStreambuf>(std::cout, Settings::get_filename_path(logFilename));
