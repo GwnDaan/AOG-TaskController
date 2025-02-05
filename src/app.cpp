@@ -90,8 +90,8 @@ bool Application::initialize()
 			std::uint16_t speed = data[0] | (data[1] << 8);
 			std::uint8_t status = data[2];
 
-			// Convert from km/h to mm/s
-			speed = speed * 1E5 / 3600;
+			// Convert from hm/h to mm/s
+			speed *= 1000 / 36;
 
 			speedMessagesInterface->machineSelectedSpeedTransmitData.set_speed_source(isobus::SpeedMessagesInterface::MachineSelectedSpeedData::SpeedSource::NavigationBasedSpeed);
 			speedMessagesInterface->machineSelectedSpeedTransmitData.set_machine_direction_of_travel(isobus::SpeedMessagesInterface::MachineDirection::Forward); // TODO: Implement direction
