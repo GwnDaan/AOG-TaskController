@@ -5,9 +5,11 @@
 #include "isobus/hardware_integration/available_can_drivers.hpp"
 #include "isobus/isobus/can_stack_logger.hpp"
 
-#include <windows.h>
+#include "git.h"
 
 #include <shellapi.h>
+#include <windows.h>
+#include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -115,10 +117,15 @@ private:
 			std::cout << "  --help\t\tShow this help message\n";
 			std::cout << "  --version\t\tShow the version of the application\n";
 			std::cout << "  --adapter=<driver>\tSelect the CAN driver\n";
+			std::cout << "  --channel=<channel>\tSelect the CAN channel\n";
+			std::cout << "  --log_level=<level>\tSet the log level (debug, info, warning, error, critical)\n";
+			std::cout << "  --log2file\t\tLog to file\n";
+			exit(0);
 		}
 		else if ("--version" == option)
 		{
-			std::cout << PROJECT_VERSION << std::endl;
+			std::cout << std::string(git::Describe()) + (git::AnyUncommittedChanges() ? "-dirty" : "") << std::endl;
+			exit(0);
 		}
 		else if ("--log2file" == option)
 		{
@@ -207,6 +214,17 @@ private:
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd)
 {
+	// Try to attach to the parent process’s console if it exists
+	if (AttachConsole(ATTACH_PARENT_PROCESS))
+	{
+		FILE *fp;
+		freopen_s(&fp, "CONOUT$", "w", stdout); // Redirect stdout to the console
+		std::cout << std::string(100, '\n'); // Clear the console screen
+		std::cout << "WARNING: Only start the application if you know what you are doing. It is intended to be started from AgIO!" << std::endl;
+		std::cout << "Press Ctrl+C to stop the application..." << std::endl;
+		std::cout << std::endl; // White space
+	}
+
 	std::ofstream logFile;
 	std::shared_ptr<isobus::CANHardwarePlugin> canDriver;
 	auto arguments = ParseCommandLine(lpCmdLine);
@@ -228,7 +246,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		std::cout << arg.c_str() << " ";
 	}
 	std::cout << std::endl;
-	std::cout << "AOG-TaskController v" << PROJECT_VERSION << std::endl;
+	std::cout << "AOG-TC version: v" << std::string(git::Describe()) + (git::AnyUncommittedChanges() ? "-dirty" : "") << std::endl;
 
 	if (!argumentsProcessed)
 	{
