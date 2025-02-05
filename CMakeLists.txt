@@ -39,6 +39,13 @@ FetchContent_Declare(
       DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 FetchContent_MakeAvailable(json)
 
+include(FetchContent)
+FetchContent_Declare(
+  git_version
+  GIT_REPOSITORY https://github.com/andrew-hardin/cmake-git-version-tracking.git
+  GIT_TAG 904dbda1336ba4b9a1415a68d5f203f576b696bb)
+FetchContent_MakeAvailable(git_version)
+
 find_package(Threads REQUIRED)
 
 file(GLOB_RECURSE SRC_FILES ${CMAKE_CURRENT_LIST_DIR}/src/*.cpp)
@@ -57,8 +64,13 @@ target_compile_definitions(
 
 target_link_libraries(
   ${PROJECT_NAME}
-  PRIVATE isobus::Isobus isobus::HardwareIntegration Threads::Threads
-          isobus::Utility Boost::asio nlohmann_json::nlohmann_json)
+  PRIVATE isobus::Isobus
+          isobus::HardwareIntegration
+          Threads::Threads
+          isobus::Utility
+          Boost::asio
+          nlohmann_json::nlohmann_json
+          cmake_git_version_tracking)
 
 install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION bin COMPONENT applications)
 
