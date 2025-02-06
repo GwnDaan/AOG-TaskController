@@ -331,26 +331,17 @@ bool MyTCServer::on_value_command(std::shared_ptr<isobus::ControlFunction> partn
 			{
 				clients[partner].set_section_actual_state(i + sectionIndexOffset, (processDataValue >> (2 * i)) & 0x03);
 			}
-
-			std::cout << "Received actual condensed work state for element number " << int(elementNumber) << " and DDI " << int(dataDescriptionIndex) << " with states: ";
-			for (std::uint8_t i = 0; i < NUMBER_SECTIONS_PER_CONDENSED_MESSAGE; i++)
-			{
-				std::cout << static_cast<int>(clients[partner].get_section_actual_state(sectionIndexOffset + i)) << " ";
-			}
-			std::cout << std::endl;
 		}
 		break;
 
 		case static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SectionControlState):
 		{
-			std::cout << "Received section control state: " << processDataValue << std::endl;
 			clients[partner].set_section_control_enabled(processDataValue == 1);
 		}
 		break;
 
 		case static_cast<std::uint16_t>(isobus::DataDescriptionIndex::ActualWorkState):
 		{
-			std::cout << "Received actual work state: " << processDataValue << std::endl;
 			clients[partner].set_setpoint_work_state(processDataValue == 1);
 		}
 	}
@@ -406,12 +397,10 @@ void MyTCServer::request_measurement_commands()
 
 										if (processDataObject->has_trigger_method(isobus::task_controller_object::DeviceProcessDataObject::AvailableTriggerMethods::OnChange))
 										{
-											std::cout << "Requesting on-change trigger for element number " << int(elementObject->get_element_number()) << " and DDI " << int(processDataObject->get_ddi()) << std::endl;
 											send_change_threshold_measurement_command(client.first, processDataObject->get_ddi(), elementObject->get_element_number(), 1);
 										}
 										if (processDataObject->has_trigger_method(isobus::task_controller_object::DeviceProcessDataObject::AvailableTriggerMethods::TimeInterval))
 										{
-											std::cout << "Requesting time interval trigger for element number " << int(elementObject->get_element_number()) << " and DDI " << int(processDataObject->get_ddi()) << std::endl;
 											send_time_interval_measurement_command(client.first, processDataObject->get_ddi(), elementObject->get_element_number(), 1000);
 										}
 									}
@@ -450,7 +439,6 @@ void MyTCServer::request_measurement_commands()
 
 										if (processDataObject->has_trigger_method(isobus::task_controller_object::DeviceProcessDataObject::AvailableTriggerMethods::OnChange))
 										{
-											std::cout << "Requesting on-change trigger for element number " << int(elementObject->get_element_number()) << " and DDI " << int(processDataObject->get_ddi()) << std::endl;
 											send_change_threshold_measurement_command(client.first, processDataObject->get_ddi(), elementObject->get_element_number(), 1);
 										}
 									}
@@ -527,13 +515,6 @@ void MyTCServer::send_section_setpoint_states(std::shared_ptr<isobus::ControlFun
 		value |= (clients[client].get_section_setpoint_state(sectionOffset + i) << (2 * i));
 	}
 
-	std::cout << "Sending setpoint states for DDI offset " << static_cast<int>(ddiOffset) << " with states: ";
-	for (std::uint8_t i = 0; i < NUMBER_SECTIONS_PER_CONDENSED_MESSAGE; i++)
-	{
-		std::cout << static_cast<int>(clients[client].get_section_setpoint_state(sectionOffset + i)) << " ";
-	}
-	std::cout << std::endl;
-
 	std::uint16_t ddiTarget = static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SetpointCondensedWorkState1_16) + ddiOffset;
 	std::uint16_t elementNumber = clients[client].get_element_number_for_ddi(static_cast<isobus::DataDescriptionIndex>(ddiTarget));
 	send_set_value(client, ddiTarget, elementNumber, value);
@@ -541,7 +522,6 @@ void MyTCServer::send_section_setpoint_states(std::shared_ptr<isobus::ControlFun
 	bool setpointWorkState = clients[client].is_any_section_setpoint_on();
 	if ((clients[client].get_setpoint_work_state() != setpointWorkState))
 	{
-		std::cout << "Sending setpoint work state: " << (setpointWorkState ? "on" : "off") << std::endl;
 		send_set_value(client, static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SetpointWorkState), clients[client].get_element_number_for_ddi(isobus::DataDescriptionIndex::SetpointWorkState), setpointWorkState ? 1 : 0);
 		clients[client].set_setpoint_work_state(setpointWorkState);
 	}
@@ -549,6 +529,5 @@ void MyTCServer::send_section_setpoint_states(std::shared_ptr<isobus::ControlFun
 
 void MyTCServer::send_section_control_state(std::shared_ptr<isobus::ControlFunction> client, bool enabled)
 {
-	std::cout << "Sending section control state: " << (enabled ? "enabled" : "disabled") << std::endl;
 	send_set_value(client, static_cast<std::uint16_t>(isobus::DataDescriptionIndex::SectionControlState), clients[client].get_element_number_for_ddi(isobus::DataDescriptionIndex::SectionControlState), enabled ? 1 : 0);
 }
