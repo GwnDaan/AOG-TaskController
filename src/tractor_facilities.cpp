@@ -335,7 +335,7 @@ bool TractorFacilities::initialize()
 	return true;
 }
 
-bool TractorFacilities::send_facilities_response()
+bool TractorFacilities::send_facilities_response(bool isPowerUp)
 {
 	if (!tecuCF || !tecuCF->get_address_valid())
 	{
@@ -356,7 +356,8 @@ bool TractorFacilities::send_facilities_response()
 				hex << ' ';
 			hex << "0x" << static_cast<int>(payload[i]);
 		}
-		std::cout << "[" << get_timestamp() << "] [TractorFacilities] Sent PGN 65033 (power-up): [" << hex.str() << "]" << std::endl;
+		std::cout << "[" << get_timestamp() << "] [TractorFacilities] Sent PGN 65033 ("
+		          << (isPowerUp ? "power-up" : "requested") << "): [" << hex.str() << "]" << std::endl;
 	}
 	else
 	{
@@ -406,7 +407,7 @@ bool TractorFacilities::on_pgn_request(
 		          << static_cast<int>(sa) << ", advertising facilities: [" << hex.str() << "]" << std::endl;
 	}
 
-	return self->send_facilities_response();
+	return self->send_facilities_response(false);
 }
 
 void TractorFacilities::on_required_facilities(
@@ -427,7 +428,7 @@ void TractorFacilities::on_required_facilities(
 	auto sourceCF = message.get_source_control_function();
 	std::uint8_t sa = sourceCF ? sourceCF->get_address() : 0xFF;
 
-	// Decode and log at debug level – diagnostic only, do not change our
+	// Decode and log — diagnostic only, do not change our
 	// response based on what the implement asks for.
 	std::array<std::uint8_t, 8> raw{};
 	for (std::size_t i = 0; i < 8 && i < data.size(); ++i)
@@ -435,9 +436,10 @@ void TractorFacilities::on_required_facilities(
 		raw[i] = data[i];
 	}
 
-	// Only log at debug level (guarded by the current log level).
-	// We use a simple hex dump to avoid pulling in the full Facilities
-	// decode for a diagnostic message.
+	// Printed unconditionally, like the rest of this codebase's diagnostic
+	// logging — not gated by a log level. We use a simple hex dump to avoid
+	// pulling in the full Facilities decode for a diagnostic message.
+	// The line is only emitted when a PGN 65032 message actually arrives.
 	std::ostringstream hex;
 	hex << std::hex;
 	for (std::size_t i = 0; i < raw.size(); ++i)
@@ -446,9 +448,6 @@ void TractorFacilities::on_required_facilities(
 			hex << ' ';
 		hex << "0x" << static_cast<int>(raw[i]);
 	}
-	// AgIsoStack's CANStackLogger respects the configured log level;
-	// printing via std::cout here is consistent with the rest of the codebase.
-	// The line is only emitted when a PGN 65032 message actually arrives.
 	std::cout << "[" << get_timestamp() << "] [TractorFacilities] [Debug] PGN 65032 from SA "
 	          << static_cast<int>(sa) << ": required facilities [" << hex.str() << "]" << std::endl;
 }

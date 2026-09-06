@@ -109,8 +109,10 @@ public:
 	///        address claim has completed.
 	bool initialize();
 
-	/// @brief Broadcast PGN 65033 once (for the power-up transmission).
-	bool send_facilities_response();
+	/// @brief Broadcast PGN 65033 once, either as the unsolicited power-up
+	///        transmission or in response to a PGN 65033 request.
+	/// @param isPowerUp Only affects the wording of the confirmation log line.
+	bool send_facilities_response(bool isPowerUp = true);
 
 	/// @brief Provide a pointer to the speed messages interface so the
 	///        payload builder can check which speed PGNs are actively
@@ -136,7 +138,8 @@ private:
 	                           void *parentPointer);
 
 	/// @brief Static global-PGN callback for PGN 65032 (Required Tractor
-	///        Facilities).  Logs the request at debug level.
+	///        Facilities). Diagnostic only — logs the request unconditionally
+	///        (not gated by log level) and never changes our response.
 	static void on_required_facilities(const isobus::CANMessage &message, void *parentPointer);
 
 	std::shared_ptr<isobus::InternalControlFunction> tecuCF;

@@ -30,6 +30,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <ctime>
 #include <iomanip>
 #include <iostream>
 #include <span>

@@ -10,6 +10,24 @@
 namespace
 {
 	constexpr char REGISTRY_FILE_NAME[] = "field_registry.csv";
+
+	// Field names come from UDP input and are persisted one-per-line as
+	// "index,name". A CR or LF embedded in the name would split that into
+	// multiple lines and corrupt the registry on the next load(), so strip
+	// them before the name is used as a map key, persisted, or logged.
+	std::string strip_crlf(const std::string &name)
+	{
+		std::string sanitized;
+		sanitized.reserve(name.size());
+		for (char c : name)
+		{
+			if (c != '\r' && c != '\n')
+			{
+				sanitized.push_back(c);
+			}
+		}
+		return sanitized;
+	}
 }
 
 FieldRegistry::FieldRegistry()
@@ -83,8 +101,9 @@ void FieldRegistry::append_entry(const std::string &fieldName, std::uint16_t ind
 	out << index << ',' << fieldName << '\n';
 }
 
-std::uint16_t FieldRegistry::get_or_assign_index(const std::string &fieldName)
+std::uint16_t FieldRegistry::get_or_assign_index(const std::string &rawFieldName)
 {
+	const std::string fieldName = strip_crlf(rawFieldName);
 	auto it = nameToIndex.find(fieldName);
 	if (it != nameToIndex.end())
 	{
