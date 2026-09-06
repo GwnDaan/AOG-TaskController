@@ -931,10 +931,10 @@ bool MyTCServer::on_value_command(std::shared_ptr<isobus::ControlFunction> partn
 			// When we receive this echo, the DDI 505/506 negotiation is complete
 			// and we can begin normal TRACK data transmission.
 			std::cout << "[" << get_timestamp() << "] [TC] SetpointTramlineControlLevel echo=" << processDataValue
-			          << " — negotiation complete" << std::endl;
+			          << ((processDataValue == 1) ? " — negotiation complete" : " — no common level") << std::endl;
 			clients[partner].set_element_number_for_ddi(
 			  static_cast<isobus::DataDescriptionIndex>(dataDescriptionIndex), elementNumber);
-			clients[partner].set_track_negotiation_complete(true);
+			clients[partner].set_track_negotiation_complete(processDataValue == 1);
 		}
 		break;
 

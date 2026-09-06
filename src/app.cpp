@@ -59,22 +59,22 @@ static bool get_system_time(isobus::TimeDateInterface::TimeAndDate &td)
 	            .count() %
 	  1000;
 
-	struct tm tm_utc;
-	struct tm tm_local;
-#ifdef _WIN32
+	std::tm tm_utc{};
+	std::tm tm_local{};
+#if defined(_WIN32)
 	gmtime_s(&tm_utc, &time_t_now);
 	localtime_s(&tm_local, &time_t_now);
-	const std::time_t localAsIfUtc = _mkgmtime(&tm_local);
 #else
 	gmtime_r(&time_t_now, &tm_utc);
 	localtime_r(&time_t_now, &tm_local);
-	const std::time_t localAsIfUtc = timegm(&tm_local);
 #endif
 
 	// PGN 65254 (FEE6) requires the main fields to be UTC; localHourOffset/localMinuteOffset
 	// are what a receiver adds to UTC to reconstruct local time. Derive the real, DST-aware
-	// offset by comparing the local wall-clock fields (reinterpreted as UTC) against true UTC.
-	const long offsetSeconds = static_cast<long>(localAsIfUtc - time_t_now);
+	// offset using only standard functions (avoid non-portable timegm/_mkgmtime).
+	const std::time_t localSeconds = std::mktime(&tm_local);
+	const std::time_t utcAsLocalSeconds = std::mktime(&tm_utc);
+	const long offsetSeconds = static_cast<long>(localSeconds - utcAsLocalSeconds);
 
 	td.year = static_cast<std::uint16_t>(tm_utc.tm_year + 1900);
 	td.month = static_cast<std::uint8_t>(tm_utc.tm_mon + 1);
