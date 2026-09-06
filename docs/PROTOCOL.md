@@ -48,7 +48,7 @@ Every packet — both directions — uses the same frame:
  5+N     1     Checksum      Sum of bytes [Source .. last payload byte], mod 256
 ```
 
-Total wire size is `N + 6` bytes. The maximum payload is currently 250 bytes (limited by the TC's 512-byte receive buffer; in practice the largest PGN in use is 8 bytes).
+Total wire size is `N + 6` bytes. The maximum payload is currently 250 bytes (limited by the TC's 512-byte receive buffer). Most PGNs are ≤10 bytes; the outlier is `0xD6` (GPS/IMU data, see §2.5), which needs at least 39 bytes today.
 
 **Checksum**: the TC currently does **not** validate inbound checksums (the verification code is present but commented out in `udp_connections.cpp`). Clients **should still compute and include a correct checksum** so that future TC versions, or third-party listeners, can validate.
 
@@ -60,6 +60,7 @@ Source byte identifies the logical sender of a frame. The conventions used today
 |---|---|
 | `0x7F` (127) | **AgIO / AgValonia** (the GUI/host application) |
 | `0x80` (128) | **AOG-TaskController** itself |
+| `0x7C` (124) | **AOG's GPS/IMU submodule** — sends PGN `0xD6` only (see §2.5). |
 
 Other addresses appear on the ISOBUS side but are not used in UDP frames.
 
@@ -87,14 +88,17 @@ If no NIC matches, the TC falls back to loopback (`127.0.0.1`) — useful for lo
 
 ### 2.5 PGNs inbound (client → TC)
 
-All PGNs sent **by AgIO/AgValonia to the TC** use source `0x7F`.
+All PGNs sent **by AgIO/AgValonia to the TC** use source `0x7F`, except `0xD6` (GPS/IMU data), which comes from AOG's GPS submodule at source `0x7C`.
 
 | PGN | Name | Length | Payload |
 |---|---|---|---|
 | `0xC9` (201) | Subnet detection | 5 | `[0xC9, 0xC9, IP0, IP1, IP2]` |
+| `0xD6` (214) | GPS/IMU data | variable (≥39 used) | Only byte 38 (fix quality) is parsed today; rest of frame is currently unused. Source `0x7C`. |
 | `0xE5` (229) | Section states (64 sections) | 8 | Bitfield: bit `8·j + i` of byte `j` is section `(8j + i)` ON/OFF |
+| `0xEF` (239) | Machine data | variable | Only used as an AOG-liveness signal today; payload not parsed (see comment in `app.cpp` for the historical byte layout — tram markers there were superseded by PGN `0xF4`). |
 | `0xF1` (241) | Section control mode | 1 | `[mode]` where `1` = enabled, `0` = disabled |
 | `0xF2` (242) | Process data | 6 | `[DDI_lo, DDI_hi, val0, val1, val2, val3]` — DDI is little-endian `uint16`; value is little-endian `int32` |
+| `0xF4` (244) | Guidance track context | 10 | Real-time AB-line/track guidance state, feeding ISOBUS TRACK (Tramline Control) — see §5.7. |
 
 #### `0xC9` — Subnet detection
 
@@ -102,9 +106,17 @@ Tells the TC which `/24` subnet AgIO/AgValonia lives on. The first two payload b
 
 On receipt the TC sets `settings.subnet = [IP0, IP1, IP2]`, closes the main socket, re-runs NIC enumeration, and rebinds. Useful for plug-and-play scenarios where the host may move between subnets.
 
+#### `0xD6` — GPS/IMU data
+
+Sent from AOG's GPS submodule, source `0x7C` (not `0x7F`). The TC only reads byte 38: AOG's fix-quality code (`0`=invalid, `1`=GPS, `2`=DGPS, `3`=PPS, `4`=RTK Fixed, `5`=RTK Float, `6+`=Estimated/Manual/Simulated). This value feeds DDI 514 (GNSSQuality) — see §5.7. Two fallback cases both resolve to `1` (weakest real GNSS fix), not `0` (No GNSS): AOG reporting `6+`, and no fresh `0xD6` (AOG doesn't always send this PGN at all — e.g. Simulator mode — and if none has arrived within 2 s the last value is treated as stale, independent of whether AOG overall is still connected). `0` is deliberately avoided as a fallback because some implements gate TRACK/section control on GNSS quality being non-zero.
+
 #### `0xE5` — Section states
 
 Reports the *actual* state of up to 64 sections. 8 bytes = 64 bits, one bit per section. The TC forwards these to the connected ISOBUS implement via the appropriate condensed work-state DDIs (DDI 160/161/290).
+
+#### `0xEF` — Machine data
+
+Historically carried uturn speed, hydraulic lift, geo-stop, and tram-marker bits, consumed by a synthetic guidance-track fallback. That fallback has been removed — guidance now comes exclusively from PGN `0xF4` — so today `0xEF` is only used to update the AOG-liveness timestamp; its payload is not parsed.
 
 #### `0xF1` — Section control mode
 
@@ -118,9 +130,28 @@ Wraps a single ISO 11783 DDI/value pair. The TC currently dispatches on these DD
 |---|---|---|
 | `156` | Actual speed (mm/s) | Stored. If TECU enabled, broadcast as Ground/Wheel/Machine-selected speed (PGN 65256) + NMEA2000 SOG. Drives forward/reverse direction. Also produces J1939 PGN 65256 every 100 ms. |
 | `597` | Total distance (mm) | Stored and displayed on the VT Status page. If TECU is enabled, also populated into Speed Messages distance fields. |
-| Guidance line deviation | XTE (mm) | Converted to metres. Broadcast as NMEA2000 XTE (PGN 0x1F903) at 1 Hz. |
+| Guidance line deviation | XTE (mm) | Converted to metres. Broadcast as NMEA2000 XTE (PGN 0x1F903) at 1 Hz. Also feeds DDI 0x0201 (GuidanceLineDeviation) — see §5.7. |
 
 Unknown DDIs are silently ignored (PGN 0xF2 is the generic process-data channel — the TC will gain more DDIs over time).
+
+#### `0xF4` — Guidance track context
+
+AOG's real-time AB-line/track guidance state, driving ISOBUS TRACK (Tramline Control). 10-byte payload:
+
+```
+ Byte 0    Sequence counter (0–255, wraps)
+ Byte 1    Flags: bit0=valid, bit1=heading same way, bit2=curve mode
+ Bytes 2-3 Guidance Reference Line ID (uint16 LE) — 0 = no active track
+ Bytes 4-5 Actual Track Number (int16 LE, signed — can be negative and jump by more than 1)
+ Bytes 6-7 Track Number Left (int16 LE, signed)
+ Bytes 8-9 Track Number Right (int16 LE, signed)
+```
+
+AOG sends this **only when the guidance state actually changes** — there is no heartbeat. The TC rejects any packet whose sequence number isn't strictly ahead of the last accepted one (catches duplicates, freezes, and reordered/stale UDP delivery).
+
+**Track-number offset:** the TC adds `+1` to all three track numbers (current/left/right) before they reach `GuidanceTrackContext` — confirmed by field testing, not documented anywhere on AOG's side. As sent raw by AOG, the tramline implement's own on-board tram-pattern phase (which pass of N is "on") was consistently one pass out of sync with AOG's own intended tram on/off state, for both left and right passes; a uniform `+1` (independent of sign) brought them into agreement. See `GuidanceTrackProvider::parse()` (`AOG_TRACK_NUMBER_OFFSET`) in `guidance_track_context.hpp`.
+
+See §5.7 for how this maps onto the outbound ISOBUS DDIs.
 
 ### 2.6 PGNs outbound (TC → client)
 
@@ -250,7 +281,11 @@ Common NAME fields: Industry Group `2` (Agricultural), Device Class `0`, Manufac
 | `0xCB00` (Process Data) | 2 s | TC | ISO 11783-10 B.8.1 Task Controller Status. Status byte bit 1 = task totals active. |
 | `0x1F903` (NMEA2000 XTE) | 1 Hz | TC | Cross-track error, derived from AOG's guidance-line deviation PGN. |
 | `0xFEE8` (PGN 65256 Speed/Direction) | 100 ms | TECU | Ground/Wheel/Machine-selected speed + machine direction, J1939 format. Only when TECU enabled. |
+| `0xFC8E` (Control Function Functionalities) | At claim + periodic | TC | Announces TaskControllerBasicServer (v1), TaskControllerSectionControlServer (v1, 1 boom / 64 sections), and functionality 27 — Tramline/TRACK Server (v1, Level 1). See §5.7. |
 | `0xFC8E` (Control Function Functionalities) | At claim + periodic | TECU | Announces Class 1 BasicTractorECUServer (no options). |
+| `0xFE09` (PGN 65033 Tractor Facilities) | Power-up + on request | TECU | 8-byte facility bitmask advertising which PGNs the TECU actually broadcasts. See §5.6. |
+| `0xFEE6` (PGN 65254 Time/Date) | 10 s, suppressed if another provider is detected | TECU | Wall-clock UTC + local offset, from `TimeDateInterface`. Also answers PGN-request for `0xFEE6`. |
+| Tramline/TRACK process data (DDI 507-511, 514) | 250 ms, once a client completes negotiation | TC | See §5.7. |
 | NMEA2000 COG/SOG | Periodic | TECU | Optional course/speed over ground. |
 
 The TC also receives all ISOBUS Process Data (PGN 0xCB00) and Section Control commands from connected implements.
@@ -261,16 +296,18 @@ The TC also receives all ISOBUS Process Data (PGN 0xCB00) and Section Control co
 - **Condensed actual work-state DDIs** (160, 161, 290, plus the extended range 16001–16016 per the standard): mapped into the per-client section model and forwarded to AgIO/AgValonia as PGN `0xF0`.
 - **Section control state DDI**: tracked per client.
 - **Process data acknowledges (PDACK)**: logged.
+- **PGN 65033 requests**: answered with the Tractor Facilities response (§5.6). An implement may also send PGN 65032 (Required Tractor Facilities) to advertise what it needs; the TC logs this at debug level but does not change its response.
+- **Tramline/TRACK DDIs (505, 506, 507, 508-511, 515)**: negotiated and tracked per client — see §5.7.
 
 ### 5.4 ISOBUS feature scope
 
 | Capability | Value |
 |---|---|
 | ISO 11783-10 version | 2 (Second Edition) |
-| Generation | 1 (TC-SC) |
+| Generation | 1 (TC-SC), plus TRACK (Tramline Control) Level 1 |
 | Max booms | 1 |
 | Max sections | 64 |
-| Supported DDIs | 160 / 161 / 290 (condensed section setpoint and actual states), plus speed/distance/guidance DDIs from the tractor side |
+| Supported DDIs | 160 / 161 / 290 (condensed section setpoint and actual states); 505 / 506 / 507 / 508 / 509 / 510 / 511 / 514 / 515 (Tramline/TRACK, Level 1 — see §5.7); plus speed/distance/guidance DDIs from the tractor side |
 
 ### 5.5 Virtual Terminal UI
 
@@ -279,6 +316,65 @@ The roughly 12 KB VT object pool is embedded in the executable, so deployment do
 The pool was authored for a 480-pixel data mask and an 80-pixel softkey designator. The client asks AgIsoStack to scale both before initialization, and includes that scaling contract in the VT cache version so a terminal cannot reuse a pool cached by an older unscaled build. The UI defines five virtual navigation softkeys; terminals with fewer than five physical softkeys must support paging.
 
 At connection, the TC logs the VT version, screen dimensions, softkey dimensions, and virtual/physical softkey counts. It warns when fewer than five virtual softkeys are available. If a VT address is detected but the client has not connected after 30 seconds, it logs the reported capabilities and recovery guidance. Clear the terminal's stored/cached object pools first when diagnosing an upload failure, because stale pools and full non-volatile pool storage can prevent an otherwise compatible upload.
+
+### 5.6 Tractor Facilities (PGN 65033)
+
+When the TECU is enabled, the TC responds to PGN 65033 requests (ISO 11783-7 B.24.3) and broadcasts the response once on power-up. The 8-byte payload is a bitfield where each bit signals that the TECU actually transmits the corresponding PGN at its defined repetition rate.
+
+**Facilities advertised (bits set to 1):**
+
+| Byte | Bit(s) | Facility | Condition |
+|---|---|---|---|
+| 1 | 8,7 | TECU class | Always `00` (Class 1). |
+| 1 | 2 | Ground-based speed (PGN 65097) | `speedMessagesInterface` exists (always true when TECU is enabled). |
+| 1 | 3 | Wheel-based speed (PGN 65096) | `speedMessagesInterface` exists (always true when TECU is enabled). |
+| 3 | 8 | Time/date (PGN 65254) | `timeDateActive` — set whenever the TC's `TimeDateInterface` is actively broadcasting FEE6 (i.e. no duplicate Time/Date provider has been detected on the bus). Cleared if another ECU's FEE6 is seen. |
+| 3 | 7,6 | Ground-based distance + direction | Same as ground-based speed. |
+| 3 | 5,4 | Wheel-based distance + direction | Same as wheel-based speed. |
+
+**Facilities NOT advertised (bits always 0):**
+
+- Engine speed — no engine CAN access.
+- Power management — no key switch or power timer signals.
+- Hitch position / in-work / draft — the hydraulic lift output is a command we issue, not measured feedback; implements would trust it for work-state logic.
+- PTO shaft speed / engagement — no PTO sensor.
+- Lighting — no lighting controller.
+- Language command storage (PGN 65039) — not broadcast by the TECU.
+- Auxiliary valve commands / status — no valve interface.
+- Selected speed (PGN 65265) — not broadcast.
+- Navigation position data / high-output position — NMEA 2000 position PGNs are not forwarded over Fast Packet.
+- Front hitch / PTO — no front hitch or PTO sensors.
+- All reserved bits (byte 2 bits 2–1, byte 4 bits 3–1, byte 5 bit 5, byte 7, byte 8 including the reserved-bit indicator at bit 1).
+
+**Default payload** (TECU enabled, speed broadcasts active, TC is the sole Time/Date provider on the bus): `[0x06, 0x00, 0xF8, 0x00, 0x00, 0x00, 0x00, 0x00]`. Byte 3 drops to `0x78` (Time/date bit cleared) if another ECU's FEE6 is detected and the TC suppresses its own broadcast.
+
+**PGN 65032 (Required Tractor Facilities):** When an implement broadcasts what it needs, the TC logs the request at debug level. The response is not modified based on the implement's requirements — a facility bit is set to 1 only when backed by a live broadcast.
+
+### 5.7 Tramline / TRACK Control
+
+The TC implements AEF/ISO 11783 Task Controller TRACK (Tramline Control), **Level 1 only**: it reports track/guidance-line info to the implement. It does not compute tramline valve states itself (Level 3) or handle the extended Level 2 setup DDIs beyond negotiation.
+
+**Capability announcement**: at TC control-function claim, PGN 64654 (Control Function Functionalities, source = the TC's own address — see §5.2) advertises `TaskControllerBasicServer` v1, `TaskControllerSectionControlServer` v1 (1 boom / 64 sections), and functionality 27 (TC-TRAM) v1, telling the implement this TC supports tramline.
+
+**Negotiation (DDI 505/506 handshake)**: when a client's DDOP is registered, the TC scans it for DDI 505 (`TramlineControlLevel`), 506 (`SetpointTramlineControlLevel`), 515 (`TramlineControlState`), and the track DDIs (508-511).
+
+1. The implement reports DDI 505 as a **bitmask** (bit 0 = Level 1, bit 1 = Level 2, bit 2 = Level 3).
+2. If the implement also has DDI 506, the TC immediately writes DDI 506 back as an **enum** (`0`=no common level, `1`=Level 1, `2`=Level 2, `3`=Level 3) — currently always `1`, since only Level 1 is implemented, even if the implement also advertises Level 2/3.
+3. The implement's DDI 506 echo marks negotiation complete for that client. Only then does the TC start sending live track data to it.
+
+**Live data** (every 250 ms per negotiated client, `MyTCServer::send_tramline_track_data()`):
+
+| DDI | Name | Sent when |
+|---|---|---|
+| 507 | TramlineSequenceNumber | Track-valid only. Increments whenever `ActualTrackNumber` or the reference line ID changes — not on section-control toggles. |
+| 508 | UniqueABGuidanceReferenceLineID | Track-valid only. |
+| 509 | ActualTrackNumber | Track-valid only. Signed; can be negative and can jump by more than 1 in a single update (e.g. skipping several tracks on a headland turn). |
+| 510 / 511 | TrackNumberToTheRight / TrackNumberToTheLeft | Track-valid only. |
+| 0x0200 / 0x0201 | GuidanceLineSwathWidth / GuidanceLineDeviation | Track-valid only. Swath is currently hardcoded to 6000 mm (TODO: derive from DDOP geometry); deviation comes from AOG's XTE (PGN 0xF2, see §2.5). |
+| 514 | GNSSQuality | Always, independent of track validity — it's a positioning signal, not a track signal. Sourced from AOG PGN `0xD6` (see §2.5). |
+| 515 | TramlineControlState | **Not** sent from here. Owned solely by section-control-mode handling (PGN `0xF1`, see §2.5) — do not write it elsewhere. |
+
+"Track-valid" means the TC has an accepted PGN `0xF4` payload with the valid flag set and a non-zero reference line ID (0 = AOG's "no active track" convention). Since AOG only sends `0xF4` on change — there's no heartbeat — track validity is *not* cleared just because no new `0xF4` has arrived; it's only cleared by an explicit "guidance off" packet from AOG, or by AOG disconnecting entirely (no packets of any kind for 3 s).
 
 ---
 

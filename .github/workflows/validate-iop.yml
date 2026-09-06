@@ -34,7 +34,7 @@ jobs:
           -Wno-dev
 
       - name: Build
-        run: cmake --build build --config Release --target iop_validator
+        run: cmake --build build --config Release --target iop_validator test_tractor_facilities
 
       - name: Validate object pool
         run: ctest --test-dir build --output-on-failure
