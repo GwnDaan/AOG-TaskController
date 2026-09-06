@@ -16,6 +16,7 @@
 
 #include <cstdint>
 #include <map>
+#include <mutex>
 #include <queue>
 
 constexpr std::uint8_t NUMBER_SECTIONS_PER_CONDENSED_MESSAGE = 16;
@@ -103,7 +104,14 @@ public:
 	                      std::int32_t processDataValue,
 	                      std::uint8_t &errorCodes) override;
 	bool store_device_descriptor_object_pool(std::shared_ptr<isobus::ControlFunction> partnerCF, const std::vector<std::uint8_t> &binaryPool, bool appendToPool) override;
-	std::map<std::shared_ptr<isobus::ControlFunction>, ClientState> &get_clients();
+
+	/// @brief Returns a snapshot copy of the client map, not a live reference.
+	/// See the concurrency note on clientsMutex below for why: the isobus stack
+	/// invokes the TaskControllerServer overrides above from its own background
+	/// thread, concurrently with whichever thread calls this. A returned reference
+	/// could be mutated (even reallocated, on insert/erase) out from under a caller
+	/// mid-iteration — a returned copy can't.
+	std::map<std::shared_ptr<isobus::ControlFunction>, ClientState> get_clients();
 	void request_measurement_commands();
 	void update_section_states(std::vector<bool> &sectionStates);
 	void update_section_control_enabled(bool enabled);
@@ -115,4 +123,23 @@ private:
 
 	std::map<std::shared_ptr<isobus::ControlFunction>, ClientState> clients;
 	std::map<std::shared_ptr<isobus::ControlFunction>, std::queue<std::vector<std::uint8_t>>> uploadedPools;
+
+	/// @brief Guards clients and uploadedPools.
+	///
+	/// CONCURRENCY: the isobus/AgIsoStack stack runs its own background thread
+	/// (CANHardwareInterface's updateThread) that calls CANNetworkManager::update(),
+	/// which is what actually invokes every TaskControllerServer override in this
+	/// class (activate_object_pool, on_value_command, ...) — NOT the thread that
+	/// runs Application::update(). Meanwhile Application::update() (and the methods
+	/// it calls: request_measurement_commands, update_section_states/_control_enabled,
+	/// get_clients) reads/writes the SAME maps from the main thread. Without this
+	/// lock, that's a concurrent std::map read + insert/erase — undefined behavior,
+	/// seen in practice as the TC silently crashing (no exception, no log line)
+	/// whenever a new control function appeared on the bus. See docs/CONCURRENCY.md
+	/// before touching clients/uploadedPools or adding a new callback here: every
+	/// entry point the isobus stack can call into must take this lock
+	/// (std::recursive_mutex — some of these methods call each other, e.g.
+	/// update_section_states -> send_section_setpoint_states), and get_clients()
+	/// must keep returning a copy, not a reference (see its declaration above).
+	mutable std::recursive_mutex clientsMutex;
 };

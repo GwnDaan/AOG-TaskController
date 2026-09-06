@@ -1,4 +1,5 @@
 #include "app.hpp"
+#include "crash_handler.hpp"
 #include "logging.cpp"
 #include "settings.hpp"
 
@@ -321,36 +322,52 @@ static std::shared_ptr<isobus::CANHardwarePlugin> prepare_application(const std:
 static int run_application_loop(std::shared_ptr<isobus::CANHardwarePlugin> canDriver)
 {
 	Application app(canDriver);
-	if (!app.initialize())
+	try
 	{
-		std::cout << "Failed to initialize application..." << std::endl;
-		return -1;
-	}
-
-	std::cout << "[" << get_timestamp() << "] Press Ctrl+C to stop the application..." << std::endl;
-
-	while (running)
-	{
-#if defined(_WIN32)
-		// Pump the (hidden) message queue with a 1 ms timeout, mirroring the
-		// previous behavior so AOG can still close us via WM_CLOSE.
-		MSG msg;
-		DWORD result = MsgWaitForMultipleObjects(0, NULL, FALSE, 1, QS_ALLINPUT);
-		while (result == WAIT_OBJECT_0 && PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
+		if (!app.initialize())
 		{
-			TranslateMessage(&msg);
-			DispatchMessage(&msg);
+			std::cout << "Failed to initialize application..." << std::endl;
+			return -1;
 		}
+
+		std::cout << "[" << get_timestamp() << "] Press Ctrl+C to stop the application..." << std::endl;
+
+		while (running)
+		{
+#if defined(_WIN32)
+			// Pump the (hidden) message queue with a 1 ms timeout, mirroring the
+			// previous behavior so AOG can still close us via WM_CLOSE.
+			MSG msg;
+			DWORD result = MsgWaitForMultipleObjects(0, NULL, FALSE, 1, QS_ALLINPUT);
+			while (result == WAIT_OBJECT_0 && PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
+			{
+				TranslateMessage(&msg);
+				DispatchMessage(&msg);
+			}
 #else
-		// On POSIX we have no message loop; just sleep briefly between updates.
-		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			// On POSIX we have no message loop; just sleep briefly between updates.
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 #endif
 
-		if (!app.update())
-		{
-			std::cout << "Something unexpected happened, stopping application..." << std::endl;
-			break;
+			if (!app.update())
+			{
+				std::cout << "Something unexpected happened, stopping application..." << std::endl;
+				break;
+			}
 		}
+	}
+	// A crash (access violation, SIGSEGV, ...) can't be caught here — that's what
+	// install_crash_handlers() is for. This is the safety net for ordinary C++
+	// exceptions (e.g. a library call throwing) that would otherwise propagate all
+	// the way out and terminate the process with zero trace, since this app usually
+	// runs with no visible console and without --log2file.
+	catch (const std::exception &e)
+	{
+		log_crash(std::string("Unhandled exception escaped the main loop: ") + e.what());
+	}
+	catch (...)
+	{
+		log_crash("Unhandled exception of unknown type escaped the main loop.");
 	}
 
 	std::cout << "[" << get_timestamp() << "] Shutting down..." << std::endl;
@@ -361,6 +378,10 @@ static int run_application_loop(std::shared_ptr<isobus::CANHardwarePlugin> canDr
 #if defined(_WIN32)
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd)
 {
+	// Install first: this app usually runs with no visible console and without
+	// --log2file, so a crash otherwise leaves zero trace (see crash_handler.hpp).
+	install_crash_handlers();
+
 	// Try to attach to the parent process's console if it exists
 	if (AttachConsole(ATTACH_PARENT_PROCESS))
 	{
@@ -399,6 +420,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 #else
 int main(int argc, char **argv)
 {
+	install_crash_handlers();
+
 	std::signal(SIGINT, signal_handler);
 	std::signal(SIGTERM, signal_handler);
 	std::signal(SIGPIPE, SIG_IGN);

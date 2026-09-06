@@ -1106,9 +1106,10 @@ void Application::update_vt_section_map()
 	if (isobus::SystemTiming::time_expired_ms(lastVtSectionUpdateMs, 100))
 	{
 		std::string sectionMap = "No sections connected";
-		if (!tcServer->get_clients().empty())
+		auto clients = tcServer->get_clients(); // snapshot copy — see get_clients()'s declaration
+		if (!clients.empty())
 		{
-			auto &state = tcServer->get_clients().begin()->second;
+			auto &state = clients.begin()->second;
 			const auto sectionCount = std::min<std::uint8_t>(state.get_number_of_sections(), 64);
 			if (sectionCount > 0)
 			{
@@ -1184,7 +1185,7 @@ void Application::update_vt_status_strings(bool aogConnected)
 	send_vt_string_if_changed(VTAogIPStr, udpConnections->get_bound_ip_address());
 	const std::string packetAge = (lastAogPacketMs == 0) ? "never" : (std::to_string(isobus::SystemTiming::get_time_elapsed_ms(lastAogPacketMs) / 1000) + " s");
 	const bool taskRunning = tcServer->get_task_totals_active();
-	auto &clients = tcServer->get_clients();
+	auto clients = tcServer->get_clients(); // snapshot copy — see get_clients()'s declaration
 
 	std::uint32_t totalSections = 0;
 	for (const auto &client : clients)

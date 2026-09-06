@@ -2,7 +2,7 @@
 
 This document describes the interfaces AOG-TaskController exposes to the rest of the system. The intended audience is anyone writing a client — AgOpenGPS (AgIO), AgValoniaGPS, or a generic ISOBUS controller — that needs to talk to the TC.
 
-For Linux deployment of the TC itself (systemd, CAN setup, the daemon footprint), see [LINUX_DAEMON.md](LINUX_DAEMON.md).
+For Linux deployment of the TC itself (systemd, CAN setup, the daemon footprint), see [LINUX_DAEMON.md](LINUX_DAEMON.md). For the TC's threading model — which callbacks run on which thread, and what that means for any state you touch — see [CONCURRENCY.md](CONCURRENCY.md).
 
 ---
 

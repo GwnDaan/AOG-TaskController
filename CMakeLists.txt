@@ -131,6 +131,19 @@ target_link_libraries(
           nlohmann_json::nlohmann_json
           cmake_git_version_tracking)
 
+if(WIN32)
+  # For crash_handler.cpp's minidump writer (MiniDumpWriteDump).
+  target_link_libraries(${PROJECT_NAME} PRIVATE dbghelp)
+endif()
+
+if(MSVC)
+  # Keep Release optimizations but still emit a PDB, so a crash dump (see
+  # crash_handler.hpp) can actually be symbolicated afterwards — without this,
+  # .dmp files are close to useless.
+  target_compile_options(${PROJECT_NAME} PRIVATE /Zi)
+  target_link_options(${PROJECT_NAME} PRIVATE /DEBUG /OPT:REF /OPT:ICF)
+endif()
+
 install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION bin COMPONENT applications)
 
 option(AOG_TC_VALIDATE_IOP "Build and register the object pool validator test"
