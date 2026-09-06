@@ -399,7 +399,7 @@ bool MyTCServer::activate_object_pool(std::shared_ptr<isobus::ControlFunction> p
 			                 << " activation REJECTED: deserialized pool (" << state.get_pool().size()
 			                 << " objects) has no Device object." << std::endl;
 			activationError = ObjectPoolActivationError::ThereAreErrorsInTheDDOP;
-			objectPoolError = ObjectPoolErrorCodes::AnyOtherError;
+			objectPoolError = ObjectPoolErrorCodes::UnknownObjectReference;
 			return false;
 		}
 
