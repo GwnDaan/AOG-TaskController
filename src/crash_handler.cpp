@@ -163,18 +163,26 @@ namespace
 		writeRaw(name);
 		writeRaw("\n");
 
-		std::signal(signalNumber, SIG_DFL);
-		std::raise(signalNumber);
+		// Re-trigger the signal with default disposition so the process terminates normally
+		// (and may produce a core dump), without calling non-async-signal-safe functions.
+		::kill(::getpid(), signalNumber);
+		::_exit(128 + signalNumber);
 	}
 } // namespace
 
 void install_crash_handlers()
 {
-	std::signal(SIGSEGV, fatal_signal_handler);
-	std::signal(SIGABRT, fatal_signal_handler);
-	std::signal(SIGFPE, fatal_signal_handler);
-	std::signal(SIGILL, fatal_signal_handler);
-	std::signal(SIGBUS, fatal_signal_handler);
+	struct sigaction sa
+	{
+	};
+	sa.sa_handler = fatal_signal_handler;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = SA_RESETHAND;
+	const int fatalSignals[] = { SIGSEGV, SIGABRT, SIGFPE, SIGILL, SIGBUS };
+	for (int sig : fatalSignals)
+	{
+		(void)sigaction(sig, &sa, nullptr);
+	}
 	std::set_terminate(log_terminate_reason);
 }
 

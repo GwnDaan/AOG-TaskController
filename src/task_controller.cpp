@@ -485,13 +485,26 @@ MyTCServer::MyTCServer(std::shared_ptr<isobus::InternalControlFunction> internal
 {
 }
 
-bool MyTCServer::activate_object_pool(std::shared_ptr<isobus::ControlFunction> partnerCF, ObjectPoolActivationError &, ObjectPoolErrorCodes &, std::uint16_t &, std::uint16_t &)
+bool MyTCServer::activate_object_pool(std::shared_ptr<isobus::ControlFunction> partnerCF, ObjectPoolActivationError &activationError, ObjectPoolErrorCodes &objectPoolError, std::uint16_t &parentObjectIDOfFaultyObject, std::uint16_t &faultyObjectID)
 {
 	std::lock_guard<std::recursive_mutex> lock(clientsMutex);
-	std::cout << "[" << get_timestamp() << "] [TC Server] Client " << partnerCF->get_NAME().get_full_name() << " requesting object pool activation" << std::endl;
+
+	// Default to "no error" / "no faulty object" up front, so every early-return path
+	// below only needs to override what's actually wrong, per the meaning documented on
+	// TaskControllerServer::activate_object_pool() in the base class.
+	activationError = ObjectPoolActivationError::NoErrors;
+	objectPoolError = ObjectPoolErrorCodes::NoErrors;
+	parentObjectIDOfFaultyObject = isobus::NULL_OBJECT_ID;
+	faultyObjectID = isobus::NULL_OBJECT_ID;
+
+	log("TC Server") << "Client " << partnerCF->get_NAME().get_full_name() << " requesting object pool activation" << std::endl;
 	// Safety check to make sure partnerCF has uploaded a DDOP
 	if (uploadedPools.find(partnerCF) == uploadedPools.end())
 	{
+		// Not a DDOP content problem (there's no DDOP to have one) — this is a client
+		// requesting activation without ever uploading, which isn't covered by a more
+		// specific error code.
+		activationError = ObjectPoolActivationError::AnyOtherError;
 		return false;
 	}
 
@@ -509,7 +522,7 @@ bool MyTCServer::activate_object_pool(std::shared_ptr<isobus::ControlFunction> p
 	}
 	if (deserialized)
 	{
-		std::cout << "[" << get_timestamp() << "] Successfully deserialized device descriptor object pool." << std::endl;
+		log() << "Successfully deserialized device descriptor object pool." << std::endl;
 
 		// Save to NVM
 		std::shared_ptr<isobus::task_controller_object::DeviceObject> deviceObject;
@@ -528,10 +541,14 @@ bool MyTCServer::activate_object_pool(std::shared_ptr<isobus::ControlFunction> p
 			// A spec-compliant pool always has exactly one Device object at its root.
 			// If it's missing — a malformed pool, or a multi-chunk transfer that didn't
 			// concatenate correctly upstream — reject the activation instead of crashing
-			// on the dereference below.
-			std::cout << "[" << get_timestamp() << "] [TC Server] Client " << partnerCF->get_NAME().get_full_name()
-			          << " activation REJECTED: deserialized pool (" << state.get_pool().size()
-			          << " objects) has no Device object." << std::endl;
+			// on the dereference below. There's no single faulty object ID to point at
+			// here (the problem is an absence, not a bad object), so parent/faulty stay
+			// NULL_OBJECT_ID.
+			log("TC Server") << "Client " << partnerCF->get_NAME().get_full_name()
+			                 << " activation REJECTED: deserialized pool (" << state.get_pool().size()
+			                 << " objects) has no Device object." << std::endl;
+			activationError = ObjectPoolActivationError::ThereAreErrorsInTheDDOP;
+			objectPoolError = ObjectPoolErrorCodes::UnknownObjectReference;
 			return false;
 		}
 
@@ -550,16 +567,16 @@ bool MyTCServer::activate_object_pool(std::shared_ptr<isobus::ControlFunction> p
 			{
 				outFile.write(reinterpret_cast<const char *>(binaryPool.data()), binaryPool.size());
 				outFile.close();
-				std::cout << "[" << get_timestamp() << "] Saved DDOP to file: " << fileName << std::endl;
+				log() << "Saved DDOP to file: " << fileName << std::endl;
 			}
 			else
 			{
-				std::cout << "[" << get_timestamp() << "] Unable to save DDOP to NVM. (Failed to open file) file: " << fileName << std::endl;
+				log() << "Unable to save DDOP to NVM. (Failed to open file) file: " << fileName << std::endl;
 			}
 		}
 		else
 		{
-			std::cout << "[" << get_timestamp() << "] Unable to save DDOP to NVM. (Failed to generate binary object pool)" << std::endl;
+			log() << "Unable to save DDOP to NVM. (Failed to generate binary object pool)" << std::endl;
 		}
 
 		auto implement = isobus::DeviceDescriptorObjectPoolHelper::get_implement_geometry(state.get_pool());
@@ -642,22 +659,22 @@ bool MyTCServer::activate_object_pool(std::shared_ptr<isobus::ControlFunction> p
 		if (hasCondensedSetpoint)
 		{
 			// Modern: condensed setpoint DDI 290+ (always paired with DDI 289 for global work state)
-			std::cout << "[" << get_timestamp() << "] [TC Server] Attempting Section Control via: DDI 290 (SetpointCondensedWorkState) + DDI 289 (SetpointWorkState)"
-			          << " for " << static_cast<int>(numberOfSections) << " sections." << std::endl;
+			log("TC Server") << "Attempting Section Control via: DDI 290 (SetpointCondensedWorkState) + DDI 289 (SetpointWorkState)"
+			                 << " for " << static_cast<int>(numberOfSections) << " sections." << std::endl;
 		}
 		else if (hasSettableCondensedActual)
 		{
 			// Old: settable condensed actual DDI 161+
-			std::cout << "[" << get_timestamp() << "] [TC Server] Attempting Section Control via: DDI 161 (ActualCondensedWorkState, settable)"
-			          << " for " << static_cast<int>(numberOfSections) << " sections." << std::endl;
+			log("TC Server") << "Attempting Section Control via: DDI 161 (ActualCondensedWorkState, settable)"
+			                 << " for " << static_cast<int>(numberOfSections) << " sections." << std::endl;
 		}
 		else if (hasSettableActualWorkState)
 		{
 			// Oldest: per-element settable DDI 141
 			state.set_uses_per_element_control(true);
 			state.set_per_element_setpoint_ddi(static_cast<std::uint16_t>(isobus::DataDescriptionIndex::ActualWorkState));
-			std::cout << "[" << get_timestamp() << "] [TC Server] Attempting Section Control via: DDI 141 (ActualWorkState, settable per-element)"
-			          << " for " << static_cast<int>(numberOfSections) << " sections." << std::endl;
+			log("TC Server") << "Attempting Section Control via: DDI 141 (ActualWorkState, settable per-element)"
+			                 << " for " << static_cast<int>(numberOfSections) << " sections." << std::endl;
 			for (std::uint8_t i = 0; i < numberOfSections; i++)
 			{
 				std::cout << "  Section " << static_cast<int>(i) << " -> element " << sectionElementNumbers[i] << std::endl;
@@ -665,8 +682,8 @@ bool MyTCServer::activate_object_pool(std::shared_ptr<isobus::ControlFunction> p
 		}
 		else
 		{
-			std::cout << "[" << get_timestamp() << "] [TC Server] WARNING: No supported section control method detected! "
-			          << "Device has no DDI 290, 161 (settable), or 141 (settable)." << std::endl;
+			log("TC Server") << "WARNING: No supported section control method detected! "
+			                 << "Device has no DDI 290, 161 (settable), or 141 (settable)." << std::endl;
 		}
 
 		// === Tramline capability detection ===
@@ -725,13 +742,15 @@ bool MyTCServer::activate_object_pool(std::shared_ptr<isobus::ControlFunction> p
 	}
 	else
 	{
-		std::cout << "[" << get_timestamp() << "] Failed to deserialize device descriptor object pool." << std::endl;
+		log() << "Failed to deserialize device descriptor object pool." << std::endl;
+		activationError = ObjectPoolActivationError::ThereAreErrorsInTheDDOP;
+		objectPoolError = ObjectPoolErrorCodes::AnyOtherError;
 		return false;
 	}
 
 	clients[partnerCF] = state;
-	std::cout << "[" << get_timestamp() << "] [TC Server] Client " << partnerCF->get_NAME().get_full_name() << " registered successfully with "
-	          << static_cast<int>(state.get_number_of_sections()) << " sections." << std::endl;
+	log("TC Server") << "Client " << partnerCF->get_NAME().get_full_name() << " registered successfully with "
+	                 << static_cast<int>(state.get_number_of_sections()) << " sections." << std::endl;
 	return true;
 }
 
